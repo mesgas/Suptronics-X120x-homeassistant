@@ -132,6 +132,11 @@ a cell filling with animated liquid, the energy flow mains → UPS → Pi, a
 sparkline of the level and the charge button. Every element opens the
 more-info dialog of the matching entity.
 
+The sparkline reads the last 24 hours from the recorder, so it has a trace the
+moment the card opens rather than only after the level has moved. `hours`
+changes the window; with no recorder it falls back to the values seen while the
+dashboard is open.
+
 ### Four sizes
 
 The same card in four cuts, through `variant`:
@@ -197,6 +202,7 @@ the stacked layout. With `prefers-reduced-motion` every animation is disabled.
 ```yaml
 type: custom:x120x-ups-card
 variant: full           # full | compact | slim | gauge
+hours: 24               # how far back the sparkline looks
 name: Rack UPS          # custom title
 device_id: abc123...    # only when more than one X120X is configured
 entities:               # explicit overrides, all optional

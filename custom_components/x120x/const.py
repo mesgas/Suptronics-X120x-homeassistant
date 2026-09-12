@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "x120x"
 
-VERSION: Final = "1.4.0"
+VERSION: Final = "1.5.0"
 
 MANUFACTURER: Final = "Suptronics"
 MODELS: Final = ["X1200", "X1201", "X1202", "X1203"]

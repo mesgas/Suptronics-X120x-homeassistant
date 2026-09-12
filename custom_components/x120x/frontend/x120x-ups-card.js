@@ -18,7 +18,7 @@
  *   entities: optional explicit overrides, keyed by the roles below
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -101,6 +101,10 @@ const WINDOW_RADIUS = 92;
 const WINDOW_CIRCUMFERENCE = 2 * Math.PI * WINDOW_RADIUS;
 const HISTORY_POINTS = 48;
 
+// How far back the sparkline looks, and how often it asks the recorder again.
+const DEFAULT_HISTORY_HOURS = 24;
+const HISTORY_REFRESH_MS = 5 * 60 * 1000;
+
 /**
  * Layouts, from the whole panel down to a bare dial. Each one decides which
  * blocks are on; every block can still be forced on or off individually with
@@ -124,6 +128,9 @@ class X120XUpsCard extends HTMLElement {
     this._config = {};
     this._entities = null;
     this._history = [];
+    this._recorded = null;
+    this._historyAt = 0;
+    this._fetching = false;
     this._built = false;
   }
 
@@ -171,6 +178,88 @@ class X120XUpsCard extends HTMLElement {
       this._build();
     }
     this._update();
+    if (
+      this._shown &&
+      this._shown.sparkline &&
+      Date.now() - this._historyAt > HISTORY_REFRESH_MS
+    ) {
+      this._fetchHistory();
+    }
+  }
+
+  /**
+   * Read the battery level from the recorder.
+   *
+   * The sparkline used to be built only from values seen while the dashboard
+   * was open, which meant a pack sitting at a steady level drew nothing at
+   * all: the line needs the level to change to have anything to plot. Asking
+   * the recorder gives a real trace the moment the card is opened.
+   */
+  async _fetchHistory() {
+    const entityId = this._entities && this._entities.capacity;
+    if (this._fetching || !this._hass || !entityId) return;
+    this._fetching = true;
+    this._historyAt = Date.now();
+    try {
+      const hours = Number(this._config.hours) || DEFAULT_HISTORY_HOURS;
+      const end = new Date();
+      const start = new Date(end.getTime() - hours * 3600 * 1000);
+      const response = await this._hass.callWS({
+        type: "history/history_during_period",
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        entity_ids: [entityId],
+        minimal_response: true,
+        no_attributes: true,
+      });
+      this._recorded = this._bucket(
+        response?.[entityId] || [],
+        start.getTime(),
+        end.getTime()
+      );
+      if (this._built) this._drawSparkline();
+    } catch (err) {
+      // No recorder, or the entity was purged: the live values collected while
+      // the card is open still work as a fallback.
+      console.warn("x120x-ups-card: could not read history", err);
+      this._recorded = null;
+    } finally {
+      this._fetching = false;
+    }
+  }
+
+  /** Average the raw history into evenly spaced buckets. */
+  _bucket(raw, startMs, endMs) {
+    const span = Math.max(endMs - startMs, 1);
+    const sums = new Array(HISTORY_POINTS).fill(0);
+    const counts = new Array(HISTORY_POINTS).fill(0);
+
+    for (const entry of raw) {
+      const value = Number(entry.s ?? entry.state);
+      if (!Number.isFinite(value)) continue;
+      const seconds = entry.lu ?? entry.lc;
+      const stamp =
+        typeof seconds === "number"
+          ? seconds * 1000
+          : Date.parse(entry.last_updated ?? entry.last_changed);
+      if (!Number.isFinite(stamp)) continue;
+      const index = Math.min(
+        HISTORY_POINTS - 1,
+        Math.max(0, Math.floor(((stamp - startMs) / span) * HISTORY_POINTS))
+      );
+      sums[index] += value;
+      counts[index] += 1;
+    }
+
+    // Carry the last known value across gaps: a level that is not reported is
+    // still whatever it last was, and a hole would draw as a drop to zero.
+    const series = [];
+    let last = null;
+    for (let i = 0; i < HISTORY_POINTS; i += 1) {
+      if (counts[i]) last = sums[i] / counts[i];
+      if (last !== null) series.push(last);
+    }
+    return series;
   }
 
   /* ---------------------------------------------------------------- lookup */
@@ -469,7 +558,12 @@ class X120XUpsCard extends HTMLElement {
     const area = this._el.sparkArea;
     if (!line) return;
 
-    if (this._history.length < 2) {
+    // The recorder's trace when there is one, otherwise whatever has been seen
+    // since the card was opened.
+    const series =
+      this._recorded && this._recorded.length >= 2 ? this._recorded : this._history;
+
+    if (series.length < 2) {
       // A faint dashed baseline: it holds the space without pretending to be
       // a reading, until enough samples have come in to draw a real trace.
       line.setAttribute("points", "0,11 100,11");
@@ -480,11 +574,11 @@ class X120XUpsCard extends HTMLElement {
     line.classList.remove("empty");
 
     // Scale to the observed range, so small drifts stay readable.
-    const min = Math.min(...this._history);
-    const max = Math.max(...this._history);
+    const min = Math.min(...series);
+    const max = Math.max(...series);
     const span = Math.max(max - min, 1);
-    const stepX = 100 / (this._history.length - 1);
-    const coords = this._history.map((value, index) => {
+    const stepX = 100 / (series.length - 1);
+    const coords = series.map((value, index) => {
       const x = index * stepX;
       const y = 19 - ((value - min) / span) * 16;
       return `${x.toFixed(2)},${y.toFixed(2)}`;
