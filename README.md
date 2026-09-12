@@ -1,13 +1,49 @@
 # Suptronics X120X UPS — Home Assistant integration
 
-Custom integration for the **Suptronics X1200 / X1201 / X1202 / X1203** UPS
-HATs on a Raspberry Pi. It reads the fuel gauge over I2C and the HAT's GPIO
-lines directly from the Home Assistant instance running on the same Pi.
+Custom integration for the Suptronics **X12xx** UPS HATs on a Raspberry Pi. It
+reads the fuel gauge over I2C and the HAT's GPIO lines directly from the Home
+Assistant instance running on the same Pi.
 
 The hardware protocol was derived from the vendor's own example scripts in
-[suptronics/x120x](https://github.com/suptronics/x120x).
+[suptronics/x120x](https://github.com/suptronics/x120x) and from the
+["X12xx UPS board" software page](https://suptronics.com/Raspberrypi/Power_mgmt/x120x-v1.0_software.html)
+that Suptronics links from every board in the range.
 
 ![The X120X UPS card](docs/card.png)
+
+---
+
+## Supported boards
+
+Suptronics ships one set of scripts and one software page for the whole X12xx
+range, and it documents a single protocol: a Maxim fuel gauge at I2C `0x36`,
+power-loss detection on GPIO 6, charge control on GPIO 16. So the integration
+covers all of them:
+
+| Board | Battery | Output | Notable |
+|---|---|---|---|
+| **X1200** | 2× 18650 | 5.1 V 5 A | the classic; this is the one developed against |
+| **X1201** | 2× 18650 | 5.1 V 5 A | XH2.54 connector for an external pack |
+| **X1202** | 4× 18650 | 5.1 V 5 A | two USB sockets, XH2.54 out |
+| **X1203** | external, XH2.54 | 5.1 V 5 A | no holder: bring your own pack |
+| **X1205** | 2× 21700 | 5.1 V 6 A | |
+| **X1206** | 4× 21700 | 5.1 V 6 A | up to 20 000 mAh |
+| **X1207** | 1× 21700 | 5.1 V 5 A | powered over PoE, 802.3af/at |
+| **X1208** | 1× 21700 | 5.1 V 5 A | M.2 2280 NVMe socket on board |
+| **X1209** | external, XH2.54 | 5.1 V 6 A | 5–18 V input |
+
+Pick the board in the config flow: it only sets the model name and the product
+link on the device, never how the hardware is read. Every reading is the same
+on all of them.
+
+The **X12-A1** is not in the list because there is nothing to read: it is a
+battery holder, with no fuel gauge and no GPIO of its own.
+
+> Only the X1200 has been verified against real hardware. The rest follow the
+> vendor's own documentation for the family; if a board of yours turns out to
+> differ, the bus, the address and both pins can be overridden in the config
+> flow — and an [issue](https://github.com/mesgas/Suptronics-X120x-homeassistant/issues)
+> saying which board and what it does would be welcome.
 
 ---
 

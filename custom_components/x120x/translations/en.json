@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Suptronics X120X UPS",
-        "description": "Connect to the UPS HAT on this Raspberry Pi. The defaults match the stock wiring of the X1200/X1201/X1202/X1203 boards.",
+        "description": "Connect to the UPS HAT on this Raspberry Pi. The defaults match the stock wiring of every X12xx board.",
         "data": {
           "model": "Board model",
           "i2c_bus": "I2C bus number",
@@ -13,6 +13,7 @@
           "gpiochip": "GPIO chip device"
         },
         "data_description": {
+          "model": "Only the name and the product link shown on the device. Every X12xx board is read the same way.",
           "i2c_bus": "Bus 1 is the 40-pin header on every Raspberry Pi model.",
           "i2c_address": "Decimal or hexadecimal. The MAX17040-family gauge answers at 0x36.",
           "pld_pin": "BCM numbering. High means mains power is present.",

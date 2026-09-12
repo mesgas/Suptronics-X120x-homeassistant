@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "UPS Suptronics X120X",
-        "description": "Collega la scheda UPS installata su questo Raspberry Pi. I valori predefiniti corrispondono al cablaggio di serie delle schede X1200/X1201/X1202/X1203.",
+        "description": "Collega la scheda UPS installata su questo Raspberry Pi. I valori predefiniti corrispondono al cablaggio di serie di tutte le schede X12xx.",
         "data": {
           "model": "Modello della scheda",
           "i2c_bus": "Numero del bus I2C",
@@ -13,6 +13,7 @@
           "gpiochip": "Dispositivo GPIO chip"
         },
         "data_description": {
+          "model": "Cambia solo il nome e il link al prodotto mostrati sul dispositivo. Tutte le schede X12xx si leggono allo stesso modo.",
           "i2c_bus": "Il bus 1 è quello del connettore a 40 pin su tutti i modelli di Raspberry Pi.",
           "i2c_address": "Decimale o esadecimale. Il fuel gauge della famiglia MAX17040 risponde a 0x36.",
           "pld_pin": "Numerazione BCM. Livello alto significa rete elettrica presente.",

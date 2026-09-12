@@ -6,17 +6,40 @@ from typing import Final
 
 DOMAIN: Final = "x120x"
 
-VERSION: Final = "1.5.0"
+VERSION: Final = "1.6.0"
 
 MANUFACTURER: Final = "Suptronics"
-MODELS: Final = ["X1200", "X1201", "X1202", "X1203"]
+# The whole X12xx family. Suptronics points the "Getting started - software"
+# link of every one of these boards at the same page, titled "X12xx UPS board",
+# which documents a single protocol: the fuel gauge at I2C 0x36, GPIO 6 for
+# power-loss detection and GPIO 16 for charge control. The X1207 (PoE) and the
+# X1208 (with an M.2 NVMe socket) add hardware around that, not to it. A board
+# that ever deviates can still be corrected pin by pin in the config flow.
+MODELS: Final = [
+    "X1200",
+    "X1201",
+    "X1202",
+    "X1203",
+    "X1205",
+    "X1206",
+    "X1207",
+    "X1208",
+    "X1209",
+]
 
-# Product pages, linked from the device page in Home Assistant.
+# Product pages, linked from the device page in Home Assistant. The X12-A1 is
+# absent on purpose: it is a bare battery holder, with no fuel gauge and no
+# software page of its own, so there is nothing for this integration to read.
 MODEL_URLS: Final = {
-    "X1200": "http://suptronics.com/Raspberrypi/Power_mgmt/x1200-v1.2.html",
-    "X1201": "http://suptronics.com/Raspberrypi/Power_mgmt/x1201-v1.1.html",
-    "X1202": "http://suptronics.com/Raspberrypi/Power_mgmt/x1202-v1.1.html",
-    "X1203": "http://suptronics.com/Raspberrypi/Power_mgmt/x1203-v1.0.html",
+    "X1200": "https://suptronics.com/Raspberrypi/Power_mgmt/x1200-v1.2.html",
+    "X1201": "https://suptronics.com/Raspberrypi/Power_mgmt/x1201-v1.1.html",
+    "X1202": "https://suptronics.com/Raspberrypi/Power_mgmt/x1202-v1.1.html",
+    "X1203": "https://suptronics.com/Raspberrypi/Power_mgmt/x1203-v1.0.html",
+    "X1205": "https://suptronics.com/Raspberrypi/Power_mgmt/x1205-v1.1.html",
+    "X1206": "https://suptronics.com/Raspberrypi/Power_mgmt/x1206-v2.0.html",
+    "X1207": "https://suptronics.com/Raspberrypi/Power_mgmt/x1207-v1.2.html",
+    "X1208": "https://suptronics.com/Raspberrypi/Power_mgmt/x1208-v1.0.html",
+    "X1209": "https://suptronics.com/Raspberrypi/Power_mgmt/x1209-v1.0.html",
 }
 
 # Where the bundled Lovelace card is served from.
