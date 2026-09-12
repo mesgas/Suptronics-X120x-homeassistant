@@ -50,6 +50,12 @@
         "state": {
           "on": "mdi:battery-charging-outline"
         }
+      },
+      "auto_shutdown": {
+        "default": "mdi:power-off",
+        "state": {
+          "on": "mdi:power-settings"
+        }
       }
     },
     "number": {
@@ -58,6 +64,9 @@
       },
       "charge_limit_min": {
         "default": "mdi:arrow-collapse-down"
+      },
+      "shutdown_below": {
+        "default": "mdi:battery-arrow-down"
       }
     }
   }

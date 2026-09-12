@@ -9,17 +9,23 @@ from homeassistant.components.switch import (
     SwitchEntity,
     SwitchEntityDescription,
 )
-from homeassistant.const import STATE_OFF, EntityCategory
+from homeassistant.const import STATE_OFF, STATE_ON, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import ATTR_CHARGE_LIMIT_MAX, ATTR_CHARGE_LIMIT_MIN
+from .const import ATTR_CHARGE_LIMIT_MAX, ATTR_CHARGE_LIMIT_MIN, ATTR_SHUTDOWN_BELOW
 from .coordinator import X120XConfigEntry, X120XCoordinator
 from .entity import X120XEntity
 
 CHARGING_SWITCH = SwitchEntityDescription(
     key="charging",
+    device_class=SwitchDeviceClass.SWITCH,
+    entity_category=EntityCategory.CONFIG,
+)
+
+SHUTDOWN_SWITCH = SwitchEntityDescription(
+    key="auto_shutdown",
     device_class=SwitchDeviceClass.SWITCH,
     entity_category=EntityCategory.CONFIG,
 )
@@ -30,8 +36,13 @@ async def async_setup_entry(
     entry: X120XConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the X120X charge control switch."""
-    async_add_entities([X120XChargingSwitch(entry.runtime_data)])
+    """Set up the X120X switches."""
+    async_add_entities(
+        [
+            X120XChargingSwitch(entry.runtime_data),
+            X120XShutdownSwitch(entry.runtime_data),
+        ]
+    )
 
 
 class X120XChargingSwitch(X120XEntity, SwitchEntity, RestoreEntity):
@@ -77,3 +88,46 @@ class X120XChargingSwitch(X120XEntity, SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop charging the pack."""
         await self.coordinator.async_set_charging_switch(False)
+
+
+class X120XShutdownSwitch(X120XEntity, SwitchEntity, RestoreEntity):
+    """Shut the Raspberry Pi down when the pack runs low on battery power.
+
+    Off until the user turns it on, and restored across restarts. The threshold
+    is its companion number entity; the conditions and the safety margins live
+    in the coordinator, next to the reading they act on.
+    """
+
+    entity_description = SHUTDOWN_SWITCH
+
+    def __init__(self, coordinator: X120XCoordinator) -> None:
+        super().__init__(coordinator, SHUTDOWN_SWITCH.key)
+
+    async def async_added_to_hass(self) -> None:
+        """Re-arm the feature only if it was explicitly on before the restart."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state == STATE_ON:
+            await self.coordinator.async_set_shutdown(enabled=True)
+
+    @property
+    def is_on(self) -> bool:
+        """Return whether the automatic shutdown is armed."""
+        return self.coordinator.shutdown_enabled
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """What it will do, and whether this install can do it at all."""
+        return {
+            ATTR_SHUTDOWN_BELOW: self.coordinator.shutdown_below,
+            "host_shutdown_available": self.coordinator.host_shutdown_available,
+            "seconds_left": self.coordinator.shutdown_seconds_left,
+        }
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Arm the automatic shutdown."""
+        await self.coordinator.async_set_shutdown(enabled=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disarm it, cancelling any countdown in progress."""
+        await self.coordinator.async_set_shutdown(enabled=False)

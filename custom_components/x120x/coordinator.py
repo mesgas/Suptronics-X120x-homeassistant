@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import logging
+import time
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
@@ -29,7 +31,13 @@ from .const import (
     DEFAULT_PLD_BIAS,
     DEFAULT_PLD_PIN,
     DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SHUTDOWN_BELOW,
     DOMAIN,
+    EVENT_SHUTDOWN,
+    SHUTDOWN_BELOW_MAX,
+    SHUTDOWN_BELOW_MIN,
+    SHUTDOWN_CONFIRM_SECONDS,
+    SHUTDOWN_STARTUP_GRACE_SECONDS,
 )
 from .hardware import X120XData, X120XDevice, X120XError
 
@@ -78,6 +86,14 @@ class X120XCoordinator(DataUpdateCoordinator[X120XData]):
         # Latched side of the window: True while the pack is below the upper
         # limit and has not yet been told to stop.
         self._window_allows = True
+
+        self.shutdown_enabled = False
+        self.shutdown_below = DEFAULT_SHUTDOWN_BELOW
+        self._started_at = time.monotonic()
+        # When the pack was first seen on battery and at or below the threshold,
+        # in this unbroken run; None whenever that is not the case.
+        self._shutdown_armed_at: float | None = None
+        self._shutdown_requested = False
 
     # --- Derived settings -----------------------------------------------------
 
@@ -135,6 +151,146 @@ class X120XCoordinator(DataUpdateCoordinator[X120XData]):
         self._window_allows = True
         await self.async_request_refresh()
 
+    # --- Automatic shutdown ---------------------------------------------------
+
+    @property
+    def host_shutdown_available(self) -> bool:
+        """Whether this installation can shut its own host down.
+
+        Only a supervised install (Home Assistant OS, Supervised) has the
+        hassio.host_shutdown action. In a container or a plain Python venv the
+        integration can still announce the moment with an event, but switching
+        the machine off is up to whatever is listening for it.
+        """
+        return self.hass.services.has_service("hassio", "host_shutdown")
+
+    @property
+    def shutdown_seconds_left(self) -> int | None:
+        """Seconds until the shutdown, while one is counting down."""
+        if self._shutdown_armed_at is None or self._shutdown_requested:
+            return None
+        elapsed = time.monotonic() - self._shutdown_armed_at
+        return max(0, round(SHUTDOWN_CONFIRM_SECONDS - elapsed))
+
+    async def async_set_shutdown(
+        self, *, enabled: bool | None = None, below: float | None = None
+    ) -> None:
+        """Turn the automatic shutdown on or off, or move its threshold."""
+        if enabled is not None:
+            self.shutdown_enabled = enabled
+        if below is not None:
+            self.shutdown_below = min(SHUTDOWN_BELOW_MAX, max(SHUTDOWN_BELOW_MIN, below))
+        # Any change starts the confirmation over: raising the threshold while
+        # a countdown runs must not turn into an instant shutdown.
+        self._disarm_shutdown()
+        await self.async_request_refresh()
+
+    def _disarm_shutdown(self) -> None:
+        if self._shutdown_armed_at is not None and not self._shutdown_requested:
+            _LOGGER.info("Automatic shutdown cancelled")
+        self._shutdown_armed_at = None
+        self._shutdown_requested = False
+        persistent_notification.async_dismiss(self.hass, self._notification_id)
+
+    @property
+    def _notification_id(self) -> str:
+        return f"{DOMAIN}_shutdown_{self.config_entry.entry_id}"
+
+    def _evaluate_shutdown(self, data: X120XData) -> None:
+        """Decide, on every sample, whether it is time to shut the host down.
+
+        Three things must all be true, continuously, for a full minute: the
+        feature is on, the mains are gone, and the pack is at or below the
+        threshold. Mains coming back at any point -- even for one sample --
+        cancels it. So does touching either setting.
+        """
+        if (
+            not self.shutdown_enabled
+            or data.ac_present
+            or data.capacity > self.shutdown_below
+        ):
+            if self._shutdown_armed_at is not None:
+                self._disarm_shutdown()
+            return
+
+        now = time.monotonic()
+        if now - self._started_at < SHUTDOWN_STARTUP_GRACE_SECONDS:
+            return
+        if self._shutdown_requested:
+            return
+
+        if self._shutdown_armed_at is None:
+            self._shutdown_armed_at = now
+            _LOGGER.warning(
+                "On battery at %.0f%% (threshold %.0f%%): shutting the host down "
+                "in %s seconds unless mains power returns",
+                data.capacity,
+                self.shutdown_below,
+                SHUTDOWN_CONFIRM_SECONDS,
+            )
+            persistent_notification.async_create(
+                self.hass,
+                (
+                    f"The UPS is on battery at {data.capacity:.0f}%, at or below "
+                    f"the {self.shutdown_below:.0f}% threshold. The Raspberry Pi "
+                    f"will be shut down in {SHUTDOWN_CONFIRM_SECONDS} seconds "
+                    "unless mains power returns.\n\n"
+                    "To stop it, turn off **Shutdown on low battery** on the UPS "
+                    "device."
+                ),
+                title="UPS: shutting down soon",
+                notification_id=self._notification_id,
+            )
+            return
+
+        if now - self._shutdown_armed_at < SHUTDOWN_CONFIRM_SECONDS:
+            return
+
+        self._shutdown_requested = True
+        self.hass.async_create_task(self._async_shutdown(data))
+
+    async def _async_shutdown(self, data: X120XData) -> None:
+        """Announce the shutdown, then carry it out where that is possible."""
+        # The event goes out first and always: on an install that cannot shut
+        # its own host down, an automation listening for it is the only way the
+        # machine gets switched off in time.
+        self.hass.bus.async_fire(
+            EVENT_SHUTDOWN,
+            {
+                "entry_id": self.config_entry.entry_id,
+                "capacity": data.capacity,
+                "voltage": data.voltage,
+                "threshold": self.shutdown_below,
+            },
+        )
+
+        if not self.host_shutdown_available:
+            _LOGGER.error(
+                "Battery at %.0f%%: the host should be shut down now, but this "
+                "installation has no hassio.host_shutdown action. The %s event "
+                "has been fired for an automation to act on",
+                data.capacity,
+                EVENT_SHUTDOWN,
+            )
+            persistent_notification.async_create(
+                self.hass,
+                (
+                    f"The battery is at {data.capacity:.0f}% and the Raspberry Pi "
+                    "should be shut down now, but this installation type cannot "
+                    "shut its own host down. An `x120x_shutdown` event has been "
+                    "fired: an automation can react to it."
+                ),
+                title="UPS: shutdown not possible",
+                notification_id=self._notification_id,
+            )
+            return
+
+        _LOGGER.warning(
+            "Battery at %.0f%% on battery power: shutting the host down",
+            data.capacity,
+        )
+        await self.hass.services.async_call("hassio", "host_shutdown", blocking=False)
+
     def _charge_target(self, capacity: float) -> bool:
         """Decide whether the charge-enable pin should be asserted."""
         if capacity >= self.charge_limit_max:
@@ -169,4 +325,5 @@ class X120XCoordinator(DataUpdateCoordinator[X120XData]):
                 raise UpdateFailed(str(err)) from err
             data = replace(data, charging_allowed=target)
 
+        self._evaluate_shutdown(data)
         return data

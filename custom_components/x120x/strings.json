@@ -100,6 +100,9 @@
     "switch": {
       "charging": {
         "name": "Battery charging"
+      },
+      "auto_shutdown": {
+        "name": "Shutdown on low battery"
       }
     },
     "number": {
@@ -108,6 +111,9 @@
       },
       "charge_limit_max": {
         "name": "Charge up to"
+      },
+      "shutdown_below": {
+        "name": "Shut down below"
       }
     }
   }

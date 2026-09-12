@@ -67,6 +67,8 @@ when Home Assistant knows about it — with these entities:
 | Battery charging | `switch` | enables or disables charging (GPIO 16) |
 | Charge up to | `number` | upper end of the charge window |
 | Charge below | `number` | lower end of the charge window |
+| Shutdown on low battery | `switch` | shuts the Pi down on battery at the threshold — off by default |
+| Shut down below | `number` | threshold for the shutdown, 5–90% |
 
 ### The charge window
 
@@ -276,26 +278,86 @@ entities:               # explicit overrides, all optional
 
 ---
 
-## A useful automation
+## Shutdown on low battery
 
-A clean shutdown when the mains fail and the battery runs down. The integration
-never shuts the Pi down on its own — that call stays yours:
+Two more controls on the device, and **no automation to write**:
+
+| Entity | Type | Default |
+|---|---|---|
+| Shutdown on low battery | `switch` | **off** |
+| Shut down below | `number` | 10% (5–90%) |
+
+Turn the switch on and the Raspberry Pi is shut down cleanly when the UPS is
+**on battery** and the charge is **at or below** the threshold. Both settings
+survive a restart.
+
+It is built to err on the side of *not* switching the house off:
+
+- **Mains power always wins.** On mains nothing happens, whatever the charge.
+  If power comes back at any point during the countdown, even for a single
+  reading, the shutdown is cancelled.
+- **One minute of confirmation.** The condition has to hold, unbroken, for 60
+  seconds. A single low reading, or a power cut shorter than that, does
+  nothing. Turning the switch off, or moving the threshold, starts the minute
+  over.
+- **A notification when the countdown starts**, saying how to stop it.
+- **Three minutes of grace after Home Assistant starts.** Without it, a Pi
+  started on a flat battery would shut itself down before anyone could reach
+  the switch — and do it again at every attempt.
+- **It asks once.** Readings that keep arriving after the request do not
+  pile up further shutdown calls.
+
+The shutdown uses `hassio.host_shutdown`, which exists on **Home Assistant OS**
+and **Supervised**. On a container or core install Home Assistant cannot shut
+its own host down; the switch's `host_shutdown_available` attribute says which
+case you are in. Either way an **`x120x_shutdown` event** is fired at the
+moment of shutdown, carrying `capacity`, `voltage` and `threshold`, so an
+automation can do what the integration cannot:
 
 ```yaml
 automation:
-  - alias: Shut the Pi down on a flat UPS
+  - alias: Shut the host down when the UPS says so
     triggers:
-      - trigger: numeric_state
-        entity_id: sensor.x1200_ups_battery
-        below: 15
-        for: "00:01:00"
-    conditions:
-      - condition: state
-        entity_id: binary_sensor.x1200_ups_ac_power
-        state: "off"
+      - trigger: event
+        event_type: x120x_shutdown
     actions:
-      - action: hassio.host_shutdown
+      # Replace with whatever can shut your host down cleanly, such as a
+      # script that runs `poweroff` on it over SSH.
+      - action: script.power_off_host
 ```
+
+### Starting again when the power returns
+
+The X1200 range switches the Pi **back on by itself when mains power
+returns** — Suptronics lists *"auto power-on when power is applied or
+restored"* and *"automatically cuts off power when the Pi is shut down"* on
+the product page. The two go together: the board sees the Pi stop drawing
+current, cuts its output, and restores it when the adapter is live again,
+which boots the Pi.
+
+On a **Raspberry Pi 5** that only works if the Pi really powers off when it
+halts. By default it does not: it stays in a standby that keeps drawing
+current, so the board never sees it stop, never cuts the output, and there is
+no power cycle to boot from when mains returns — while the battery drains on a
+Pi that is not even running. The vendor's setup page covers it with two
+bootloader settings:
+
+```
+POWER_OFF_ON_HALT=1
+PSU_MAX_CURRENT=5000
+```
+
+They live in the Pi's **EEPROM**, not on the SD card, so they are set once and
+stay whatever system boots afterwards. Home Assistant OS has no tool to edit
+them; boot Raspberry Pi OS once from another card or USB stick and run
+`sudo rpi-eeprom-config -e`.
+
+**Testing it** does not require draining the battery. With the adapter
+plugged in, shut the Pi down from *Settings → System → Power*. Once it has
+halted the board should cut its output — the Pi's LEDs go dark. Unplug the
+adapter, wait a few seconds, plug it back in: the Pi should boot on its own.
+If the LEDs stay on after the halt, the EEPROM settings above are not in
+effect.
 
 ---
 

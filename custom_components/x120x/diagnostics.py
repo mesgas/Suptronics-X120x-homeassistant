@@ -47,6 +47,12 @@ async def async_get_config_entry_diagnostics(
             "minimum": coordinator.effective_charge_limit_min,
             "maximum": coordinator.charge_limit_max,
         },
+        "automatic_shutdown": {
+            "enabled": coordinator.shutdown_enabled,
+            "below": coordinator.shutdown_below,
+            "host_shutdown_available": coordinator.host_shutdown_available,
+            "seconds_left": coordinator.shutdown_seconds_left,
+        },
         "i2c_devices": sorted(glob.glob("/dev/i2c-*")),
         "gpiochips": await hass.async_add_executor_job(_chips),
     }

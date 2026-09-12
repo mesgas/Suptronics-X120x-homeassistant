@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "x120x"
 
-VERSION: Final = "1.6.4"
+VERSION: Final = "1.7.0"
 
 MANUFACTURER: Final = "Suptronics"
 # The whole X12xx family. Suptronics points the "Getting started - software"
@@ -83,6 +83,25 @@ ATTR_CHARGE_LIMIT_MAX: Final = "charge_limit_max"
 DEFAULT_CHARGE_LIMIT_MIN: Final = 95.0
 DEFAULT_CHARGE_LIMIT_MAX: Final = 100.0
 CHARGE_LIMIT_FLOOR: Final = 20.0
+
+# --- Automatic shutdown -------------------------------------------------------
+
+# Off by default: shutting the host down is not something to start doing on
+# someone's behalf the moment they install an integration.
+DEFAULT_SHUTDOWN_BELOW: Final = 10.0
+# Below 5% the gauge's estimate is at its least trustworthy and the board's own
+# cut-off is close; a shutdown started there may not get to finish.
+SHUTDOWN_BELOW_MIN: Final = 5.0
+SHUTDOWN_BELOW_MAX: Final = 90.0
+# The condition has to hold this long without a break. One low reading, or a
+# power cut shorter than a minute, is not a reason to switch the house off.
+SHUTDOWN_CONFIRM_SECONDS: Final = 60
+# After Home Assistant starts, nothing is shut down for this long. Without it a
+# Pi started on a flat battery would shut itself down before anyone could reach
+# the switch to stop it -- and do the same again at every attempt.
+SHUTDOWN_STARTUP_GRACE_SECONDS: Final = 180
+ATTR_SHUTDOWN_BELOW: Final = "shutdown_below"
+EVENT_SHUTDOWN: Final = "x120x_shutdown"
 
 # --- Fuel gauge registers -----------------------------------------------------
 

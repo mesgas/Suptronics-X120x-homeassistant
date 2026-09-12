@@ -100,6 +100,9 @@
     "switch": {
       "charging": {
         "name": "Ricarica batteria"
+      },
+      "auto_shutdown": {
+        "name": "Spegnimento a batteria scarica"
       }
     },
     "number": {
@@ -108,6 +111,9 @@
       },
       "charge_limit_max": {
         "name": "Carica fino a"
+      },
+      "shutdown_below": {
+        "name": "Spegni sotto il"
       }
     }
   }
