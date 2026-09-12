@@ -1,0 +1,113 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UPS Suptronics X120X",
+        "description": "Collega la scheda UPS installata su questo Raspberry Pi. I valori predefiniti corrispondono al cablaggio di serie delle schede X1200/X1201/X1202/X1203.",
+        "data": {
+          "model": "Modello della scheda",
+          "i2c_bus": "Numero del bus I2C",
+          "i2c_address": "Indirizzo del fuel gauge",
+          "pld_pin": "GPIO rilevamento mancanza rete",
+          "chg_pin": "GPIO abilitazione carica",
+          "gpiochip": "Dispositivo GPIO chip"
+        },
+        "data_description": {
+          "i2c_bus": "Il bus 1 è quello del connettore a 40 pin su tutti i modelli di Raspberry Pi.",
+          "i2c_address": "Decimale o esadecimale. Il fuel gauge della famiglia MAX17040 risponde a 0x36.",
+          "pld_pin": "Numerazione BCM. Livello alto significa rete elettrica presente.",
+          "chg_pin": "Numerazione BCM. Serve a interrompere la ricarica del pacco batteria.",
+          "gpiochip": "Lascia vuoto per rilevare automaticamente il chip del connettore."
+        }
+      }
+    },
+    "error": {
+      "invalid_address": "Indirizzo I2C non valido. Usa un formato tipo 0x36.",
+      "duplicate_pin": "I due pin GPIO devono essere diversi.",
+      "i2c_error": "Il fuel gauge non risponde. Verifica che l'I2C sia abilitato e che bus e indirizzo siano corretti.",
+      "gpio_error": "Non è stato possibile acquisire le linee GPIO. Controlla i numeri dei pin e che nessun altro processo le stia occupando.",
+      "unknown": "Errore imprevisto. Controlla il log di Home Assistant."
+    },
+    "abort": {
+      "already_configured": "Questo UPS è già configurato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni X120X",
+        "data": {
+          "scan_interval": "Intervallo di aggiornamento (secondi)",
+          "low_battery_threshold": "Soglia batteria scarica (%)",
+          "pld_bias": "Bias del pin di mancanza rete"
+        },
+        "data_description": {
+          "low_battery_threshold": "Attiva il sensore Batteria scarica sotto questa percentuale.",
+          "pld_bias": "Lascia su pull-up, a meno che il sensore Rete elettrica non risulti invertito."
+        }
+      }
+    }
+  },
+  "selector": {
+    "pld_bias": {
+      "options": {
+        "pull_up": "Pull-up",
+        "pull_down": "Pull-down",
+        "disabled": "Nessuno"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ups_status": {
+        "name": "Stato",
+        "state": {
+          "online": "Alimentato da rete",
+          "charging": "In carica",
+          "on_battery": "In batteria",
+          "low_battery": "Batteria scarica"
+        }
+      },
+      "battery": {
+        "name": "Batteria"
+      },
+      "battery_voltage": {
+        "name": "Tensione batteria"
+      },
+      "battery_state": {
+        "name": "Livello batteria",
+        "state": {
+          "full": "Piena",
+          "high": "Alto",
+          "medium": "Medio",
+          "low": "Basso",
+          "critical": "Critico"
+        }
+      }
+    },
+    "binary_sensor": {
+      "ac_power": {
+        "name": "Rete elettrica"
+      },
+      "battery_charging": {
+        "name": "In carica"
+      },
+      "battery_low": {
+        "name": "Batteria scarica"
+      }
+    },
+    "switch": {
+      "charging": {
+        "name": "Ricarica batteria"
+      }
+    },
+    "number": {
+      "charge_limit_min": {
+        "name": "Riprendi carica sotto"
+      },
+      "charge_limit_max": {
+        "name": "Carica fino a"
+      }
+    }
+  }
+}

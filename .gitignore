@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# Scratch harness used while developing the cards.
+.cardtest/
+.claude/
+
+# The dashboard card suite is not part of this integration: it is a project of
+# its own, to be published separately as a Frontend repository if at all.
+lovelace/

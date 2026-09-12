@@ -1,0 +1,113 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Suptronics X120X UPS",
+        "description": "Connect to the UPS HAT on this Raspberry Pi. The defaults match the stock wiring of the X1200/X1201/X1202/X1203 boards.",
+        "data": {
+          "model": "Board model",
+          "i2c_bus": "I2C bus number",
+          "i2c_address": "Fuel gauge address",
+          "pld_pin": "Power-loss detect GPIO",
+          "chg_pin": "Charge enable GPIO",
+          "gpiochip": "GPIO chip device"
+        },
+        "data_description": {
+          "i2c_bus": "Bus 1 is the 40-pin header on every Raspberry Pi model.",
+          "i2c_address": "Decimal or hexadecimal. The MAX17040-family gauge answers at 0x36.",
+          "pld_pin": "BCM numbering. High means mains power is present.",
+          "chg_pin": "BCM numbering. Used to stop the pack from charging.",
+          "gpiochip": "Leave empty to detect the header chip automatically."
+        }
+      }
+    },
+    "error": {
+      "invalid_address": "Not a valid I2C address. Use something like 0x36.",
+      "duplicate_pin": "The two GPIO pins must be different.",
+      "i2c_error": "The fuel gauge did not answer. Check that I2C is enabled and that the bus and address are correct.",
+      "gpio_error": "The GPIO lines could not be claimed. Check the pin numbers and that no other process is holding them.",
+      "unknown": "Unexpected error. See the Home Assistant log for details."
+    },
+    "abort": {
+      "already_configured": "This UPS is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "X120X options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)",
+          "low_battery_threshold": "Low battery threshold (%)",
+          "pld_bias": "Power-loss pin bias"
+        },
+        "data_description": {
+          "low_battery_threshold": "Turns the Battery low sensor on below this capacity.",
+          "pld_bias": "Leave on pull-up unless the AC power sensor reads the wrong way round."
+        }
+      }
+    }
+  },
+  "selector": {
+    "pld_bias": {
+      "options": {
+        "pull_up": "Pull-up",
+        "pull_down": "Pull-down",
+        "disabled": "None"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ups_status": {
+        "name": "Status",
+        "state": {
+          "online": "On line",
+          "charging": "Charging",
+          "on_battery": "On battery",
+          "low_battery": "Battery low"
+        }
+      },
+      "battery": {
+        "name": "Battery"
+      },
+      "battery_voltage": {
+        "name": "Battery voltage"
+      },
+      "battery_state": {
+        "name": "Battery level",
+        "state": {
+          "full": "Full",
+          "high": "High",
+          "medium": "Medium",
+          "low": "Low",
+          "critical": "Critical"
+        }
+      }
+    },
+    "binary_sensor": {
+      "ac_power": {
+        "name": "AC power"
+      },
+      "battery_charging": {
+        "name": "Charging"
+      },
+      "battery_low": {
+        "name": "Battery low"
+      }
+    },
+    "switch": {
+      "charging": {
+        "name": "Battery charging"
+      }
+    },
+    "number": {
+      "charge_limit_min": {
+        "name": "Charge below"
+      },
+      "charge_limit_max": {
+        "name": "Charge up to"
+      }
+    }
+  }
+}

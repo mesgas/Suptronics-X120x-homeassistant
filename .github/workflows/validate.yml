@@ -1,0 +1,31 @@
+name: Validate
+
+# The two checks that decide whether the integration is installable: hassfest
+# validates the manifest against Home Assistant's rules, the HACS action
+# validates the repository structure. They run on every push, on pull requests
+# and once a day, because both sets of rules change over time and a repository
+# that passed yesterday can stop passing without anything here being touched.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration

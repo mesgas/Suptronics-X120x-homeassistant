@@ -1,0 +1,20 @@
+{
+  "domain": "x120x",
+  "name": "Suptronics X120X UPS",
+  "codeowners": [
+    "@mesgas"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "frontend"
+  ],
+  "documentation": "https://github.com/mesgas/Suptronics-X120x-homeassistant",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/mesgas/Suptronics-X120x-homeassistant/issues",
+  "requirements": [
+    "smbus2>=0.4.3"
+  ],
+  "version": "1.4.0"
+}
