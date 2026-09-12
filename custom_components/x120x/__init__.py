@@ -12,6 +12,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     CARD_FILENAME,
@@ -36,8 +37,33 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Serve the dashboard card as early as Home Assistant will let us.
+
+    The card URL is handed to the frontend with add_extra_js_url, and the
+    frontend bakes the list of module URLs into the page it serves. A browser
+    that loads a dashboard before this has run therefore gets a page with no
+    mention of our module at all, and shows "Custom element doesn't exist"
+    until it is reloaded -- on every client, for as long as that page stays
+    open, with a perfectly healthy integration behind it.
+
+    That is why this lives here and not in async_setup_entry: entry setup waits
+    for the I2C bus and the GPIO lines, and when the hardware is not ready it
+    raises ConfigEntryNotReady and is retried with a growing backoff. Opening
+    the dashboard during that window used to mean no card, and nothing on
+    screen connected the two facts.
+    """
+    await _async_register_frontend(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: X120XConfigEntry) -> bool:
     """Set up the UPS from a config entry."""
+    # Belt and braces: async_setup is not called when the component is loaded
+    # only to set an entry up again after a reload, and registering twice is a
+    # no-op anyway.
+    await _async_register_frontend(hass)
+
     coordinator = X120XCoordinator(hass, entry)
 
     try:
@@ -54,7 +80,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: X120XConfigEntry) -> boo
 
     entry.runtime_data = coordinator
     _async_register_device(hass, entry, coordinator)
-    await _async_register_frontend(hass)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

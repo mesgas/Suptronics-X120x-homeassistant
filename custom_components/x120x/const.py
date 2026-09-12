@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "x120x"
 
-VERSION: Final = "1.6.1"
+VERSION: Final = "1.6.2"
 
 MANUFACTURER: Final = "Suptronics"
 # The whole X12xx family. Suptronics points the "Getting started - software"
