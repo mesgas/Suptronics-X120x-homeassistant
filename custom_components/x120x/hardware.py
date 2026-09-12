@@ -17,6 +17,10 @@ import logging
 from smbus2 import SMBus
 
 from .const import (
+    BATTERY_LEVEL_FULL,
+    BATTERY_LEVEL_HIGH,
+    BATTERY_LEVEL_LOW,
+    BATTERY_LEVEL_MEDIUM,
     BATTERY_STATE_CRITICAL,
     BATTERY_STATE_FULL,
     BATTERY_STATE_HIGH,
@@ -64,18 +68,14 @@ class X120XData:
 
     @property
     def battery_state(self) -> str:
-        """Coarse battery level derived from cell voltage.
-
-        The bands come from the vendor's own reference script; they describe a
-        single-cell Li-ion pack, which is what all X120X models ship with.
-        """
-        if self.voltage >= 3.87:
+        """Coarse battery level, from the gauge's state of charge."""
+        if self.capacity >= BATTERY_LEVEL_FULL:
             return BATTERY_STATE_FULL
-        if self.voltage >= 3.70:
+        if self.capacity >= BATTERY_LEVEL_HIGH:
             return BATTERY_STATE_HIGH
-        if self.voltage >= 3.55:
+        if self.capacity >= BATTERY_LEVEL_MEDIUM:
             return BATTERY_STATE_MEDIUM
-        if self.voltage >= 3.40:
+        if self.capacity >= BATTERY_LEVEL_LOW:
             return BATTERY_STATE_LOW
         return BATTERY_STATE_CRITICAL
 

@@ -6,7 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "x120x"
 
-VERSION: Final = "1.6.3"
+VERSION: Final = "1.6.4"
 
 MANUFACTURER: Final = "Suptronics"
 # The whole X12xx family. Suptronics points the "Getting started - software"
@@ -92,7 +92,6 @@ REG_VERSION: Final = 0x08
 
 # --- Derived battery state ----------------------------------------------------
 
-# Voltage bands taken from the vendor's merged-trixie.py reference script.
 BATTERY_STATE_FULL: Final = "full"
 BATTERY_STATE_HIGH: Final = "high"
 BATTERY_STATE_MEDIUM: Final = "medium"
@@ -106,6 +105,18 @@ BATTERY_STATES: Final = [
     BATTERY_STATE_LOW,
     BATTERY_STATE_CRITICAL,
 ]
+
+# Lower edge of each band, on the fuel gauge's state of charge.
+#
+# These used to be cell voltages copied from the vendor's merged-trixie.py,
+# which call a pack "full" from 3.87 V -- roughly half charge for a Li-ion
+# cell, so "full" showed on a pack at 60%. Voltage is also a poor ruler on its
+# own: it sags under load and floats after charging. The gauge's percentage
+# already accounts for both, and is the figure every other entity uses.
+BATTERY_LEVEL_FULL: Final = 95.0
+BATTERY_LEVEL_HIGH: Final = 60.0
+BATTERY_LEVEL_MEDIUM: Final = 30.0
+BATTERY_LEVEL_LOW: Final = 10.0
 
 # Above this capacity the pack is considered full, so "charging" turns off even
 # while mains power is present.

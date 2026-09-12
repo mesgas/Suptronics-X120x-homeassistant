@@ -60,7 +60,7 @@ when Home Assistant knows about it — with these entities:
 | Status | `sensor` (enum) | `online` · `charging` · `on_battery` · `low_battery` |
 | Battery | `sensor` | percentage, `device_class: battery` |
 | Battery voltage | `sensor` | volts, 3 decimals |
-| Battery level | `sensor` (enum, diagnostic) | band derived from cell voltage |
+| Battery level | `sensor` (enum, diagnostic) | band of the charge: full ≥ 95%, high ≥ 60%, medium ≥ 30%, low ≥ 10%, critical below |
 | AC power | `binary_sensor` | `device_class: plug`, from GPIO 6 |
 | Charging | `binary_sensor` | `device_class: battery_charging` |
 | Battery low | `binary_sensor` | configurable threshold |
