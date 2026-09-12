@@ -7,6 +7,8 @@ lines directly from the Home Assistant instance running on the same Pi.
 The hardware protocol was derived from the vendor's own example scripts in
 [suptronics/x120x](https://github.com/suptronics/x120x).
 
+![The X120X UPS card](docs/card.png)
+
 ---
 
 ## What it creates
@@ -14,6 +16,8 @@ The hardware protocol was derived from the vendor's own example scripts in
 A complete **device** in the Home Assistant registry — manufacturer, model,
 fuel gauge revision, a link to the product page, and stacked under the host
 when Home Assistant knows about it — with these entities:
+
+![The device page](docs/device.png)
 
 | Entity | Type | Notes |
 |---|---|---|
@@ -144,6 +148,8 @@ type: custom:x120x-ups-card
 variant: compact
 ```
 
+![The four variants](docs/variants.png)
+
 Every block can still be forced on or off regardless of the variant, through
 `show_flow`, `show_sparkline`, `show_chips` and `show_button`. For instance the
 compact one **with** the energy flow diagram:
@@ -166,6 +172,11 @@ An unknown `variant` is rejected with the list of the valid ones, rather than
 producing some arbitrary layout.
 
 ### Animations
+
+![The card reacting to the UPS state](docs/animations.gif)
+
+Mains lost, the pack draining, the low-battery threshold crossed, then charging
+again: the tint, the ring, the chips and the glow all follow the state.
 
 Everything that moves carries information, and nothing loops without a reason:
 

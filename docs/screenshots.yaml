@@ -1,0 +1,43 @@
+# Temporary dashboard for taking the README screenshots.
+#
+# Create a new dashboard (Settings -> Dashboards -> Add dashboard -> New from
+# scratch), open its raw editor (pencil -> three dots -> Raw configuration
+# editor), paste this, and save. Take the shots, then delete the dashboard.
+#
+# Every variant is on one view so the whole set is a single screenshot, and the
+# titles say which is which. Delete this file from the repository afterwards if
+# you would rather not ship it.
+
+views:
+  - title: Card variants
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: "variant: full"
+          - type: custom:x120x-ups-card
+
+          - type: heading
+            heading: "variant: compact"
+          - type: custom:x120x-ups-card
+            variant: compact
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: "variant: slim"
+          - type: custom:x120x-ups-card
+            variant: slim
+
+          - type: heading
+            heading: "variant: slim + show_flow"
+          - type: custom:x120x-ups-card
+            variant: slim
+            show_flow: true
+
+          - type: heading
+            heading: "variant: gauge"
+          - type: custom:x120x-ups-card
+            variant: gauge
