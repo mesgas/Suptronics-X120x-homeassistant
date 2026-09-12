@@ -153,9 +153,10 @@ bias of the power-loss pin.
 
 ## The dashboard card
 
-The integration serves and registers an animated Lovelace card by itself:
-**no dashboard resource has to be added**. It shows up in the card picker as
-*X120X UPS*, or in YAML:
+The integration serves an animated Lovelace card and **adds it to your
+dashboard resources by itself** — you will find it under *Settings →
+Dashboards → Resources*, and it is removed again together with the last UPS.
+It shows up in the card picker as *X120X UPS*, or in YAML:
 
 ```yaml
 type: custom:x120x-ups-card
@@ -232,6 +233,27 @@ Everything that moves carries information, and nothing loops without a reason:
 The layout responds to the **width of the card**, not of the window
 (`@container`): a narrow card in a column of a wide screen still switches to
 the stacked layout. With `prefers-reduced-motion` every animation is disabled.
+
+### How the card is loaded
+
+As a Lovelace **resource**, exactly as if you had added it by hand. Earlier
+releases injected it into the frontend page instead, and that page is cached
+— by the browser's service worker and, wholesale, by the companion apps — so
+a client holding an old copy could report `Custom element doesn't exist:
+x120x-ups-card` on an integration that was working perfectly. Resources are
+not part of the page: every dashboard asks the server for them each time it
+opens.
+
+If your dashboards are in **YAML mode** there is no resource store to write
+to, and the card falls back to injection. In that case you can add it to your
+`resources:` yourself, which is the more reliable of the two:
+
+```yaml
+lovelace:
+  resources:
+    - url: /x120x_static/x120x-ups-card.js
+      type: module
+```
 
 ### All the options
 

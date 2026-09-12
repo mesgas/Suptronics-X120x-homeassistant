@@ -6,8 +6,9 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "frontend",
     "http",
-    "frontend"
+    "lovelace"
   ],
   "documentation": "https://github.com/mesgas/Suptronics-X120x-homeassistant",
   "integration_type": "device",
@@ -16,5 +17,5 @@
   "requirements": [
     "smbus2>=0.4.3"
   ],
-  "version": "1.6.2"
+  "version": "1.6.3"
 }

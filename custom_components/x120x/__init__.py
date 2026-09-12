@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from pathlib import Path
+from typing import Any
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -18,7 +18,6 @@ from .const import (
     CARD_FILENAME,
     CONF_MODEL,
     DATA_FRONTEND_REGISTERED,
-    DATA_FRONTEND_TOKEN,
     DOMAIN,
     MANUFACTURER,
     MODEL_URLS,
@@ -40,18 +39,10 @@ PLATFORMS: list[Platform] = [
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Serve the dashboard card as early as Home Assistant will let us.
 
-    The card URL is handed to the frontend with add_extra_js_url, and the
-    frontend bakes the list of module URLs into the page it serves. A browser
-    that loads a dashboard before this has run therefore gets a page with no
-    mention of our module at all, and shows "Custom element doesn't exist"
-    until it is reloaded -- on every client, for as long as that page stays
-    open, with a perfectly healthy integration behind it.
-
-    That is why this lives here and not in async_setup_entry: entry setup waits
-    for the I2C bus and the GPIO lines, and when the hardware is not ready it
-    raises ConfigEntryNotReady and is retried with a growing backoff. Opening
-    the dashboard during that window used to mean no card, and nothing on
-    screen connected the two facts.
+    This lives here and not in async_setup_entry because entry setup waits for
+    the I2C bus and the GPIO lines, and when the hardware is not ready it raises
+    ConfigEntryNotReady and is retried with a growing backoff. The card has no
+    reason to wait for any of that.
     """
     await _async_register_frontend(hass)
     return True
@@ -132,10 +123,23 @@ def _async_register_device(
 
 
 async def _async_register_frontend(hass: HomeAssistant) -> None:
-    """Serve and auto-load the bundled Lovelace card.
+    """Serve the bundled Lovelace card and make every dashboard load it.
 
-    Registering the JS module ourselves means the card shows up in the card
-    picker without the user having to add a dashboard resource by hand.
+    The card is registered as a Lovelace *resource*, exactly as if it had been
+    added by hand under Settings -> Dashboards -> Resources, rather than being
+    injected with add_extra_js_url.
+
+    The difference is where the URL ends up. add_extra_js_url writes it into
+    the HTML page the frontend serves, and that page is cached -- aggressively
+    by the service worker, and wholesale by the companion apps. A client
+    holding a page from a moment when the module was not listed shows "Custom
+    element doesn't exist" until that copy is thrown away, on an integration
+    that is working perfectly. Resources are not in the page at all: each
+    dashboard asks the server for the list over the websocket every time it
+    opens, so no cached copy of anything can leave the card out.
+
+    Dashboards in YAML mode have no resource store to write to; there, and only
+    there, the old injection is used.
     """
     domain_data = hass.data.setdefault(DOMAIN, {})
     if domain_data.get(DATA_FRONTEND_REGISTERED):
@@ -157,11 +161,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     try:
         await hass.http.async_register_static_paths(
-            # Cache it. The URL carries a cache key that changes with every
-            # release and every restart (see below), so nothing can be served
-            # stale for long -- while re-downloading 34 kB on every page load
-            # delays the module enough that the dashboard can give up waiting
-            # for it and report the card as a missing custom element.
+            # Cache it: the URL carries ?v=<version>, so a release is a new URL
+            # and can never be served stale.
             [StaticPathConfig(URL_BASE, str(frontend_dir), cache_headers=True)]
         )
     except (RuntimeError, ValueError) as err:
@@ -178,19 +179,112 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             card_url,
         )
 
-    # The cache key is the version *and* a token minted once per Home Assistant
-    # run. Versioning alone keeps an URL alive from one release to the next, so
-    # a browser that happens to cache a truncated response keeps serving itself
-    # that truncated response for weeks, and no ordinary reload dislodges it --
-    # the card is simply missing and nothing explains why. With the token, the
-    # file is still cached for the whole run (which is what stops the reload
-    # storm that made the dashboard give up waiting for the module), and a
-    # restart is enough to get a clean copy.
-    token = domain_data.setdefault(DATA_FRONTEND_TOKEN, uuid.uuid4().hex[:8])
-    add_extra_js_url(hass, f"{card_url}?v={VERSION}.{token}")
+    versioned_url = f"{card_url}?v={VERSION}"
+    if await _async_ensure_lovelace_resource(hass, card_url, versioned_url):
+        _LOGGER.info(
+            "X120X dashboard card registered as a Lovelace resource: %s",
+            versioned_url,
+        )
+    else:
+        add_extra_js_url(hass, versioned_url)
+        _LOGGER.info(
+            "Dashboards are in YAML mode, so the X120X card is injected instead "
+            "of registered as a resource: %s",
+            versioned_url,
+        )
     domain_data[DATA_FRONTEND_REGISTERED] = True
-    _LOGGER.info(
-        "X120X dashboard card served at %s; it appears in the card picker as "
-        "'X120X UPS' after a hard refresh of the browser",
-        card_url,
+
+
+def _lovelace_resources(hass: HomeAssistant) -> Any | None:
+    """Return the Lovelace resource store, or None when there is none to write.
+
+    Home Assistant has kept this in two shapes: a plain dict up to early 2025,
+    a LovelaceData dataclass since. In YAML mode the collection is read-only
+    and has no create method, which is the one thing checked here.
+    """
+    data = hass.data.get("lovelace")
+    if data is None:
+        return None
+    resources = (
+        data.get("resources")
+        if isinstance(data, dict)
+        else getattr(data, "resources", None)
     )
+    if resources is None or not hasattr(resources, "async_create_item"):
+        return None
+    return resources
+
+
+def _is_our_resource(item: dict[str, Any], card_url: str) -> bool:
+    """Match on the path alone, whatever version or token follows it."""
+    return str(item.get("url", "")).split("?", 1)[0] == card_url
+
+
+async def _async_ensure_lovelace_resource(
+    hass: HomeAssistant, card_url: str, versioned_url: str
+) -> bool:
+    """Create, update or de-duplicate our resource. False means "cannot"."""
+    resources = _lovelace_resources(hass)
+    if resources is None:
+        return False
+    try:
+        # Loads the store from disk in every version that has one. Reading the
+        # items before this would return an empty list and create a duplicate
+        # at every restart.
+        await resources.async_get_info()
+        ours = [
+            item for item in resources.async_items() if _is_our_resource(item, card_url)
+        ]
+        if not ours:
+            await resources.async_create_item(
+                {"res_type": "module", "url": versioned_url}
+            )
+            return True
+
+        first, *duplicates = ours
+        if first.get("url") != versioned_url or first.get("type") != "module":
+            await resources.async_update_item(
+                first["id"], {"res_type": "module", "url": versioned_url}
+            )
+        # A copy added by hand while chasing the missing card, or left behind
+        # by an older release, would load the module twice.
+        for item in duplicates:
+            await resources.async_delete_item(item["id"])
+    except Exception:  # noqa: BLE001 - any failure here must fall back, not break setup
+        _LOGGER.warning(
+            "Could not register the X120X card as a Lovelace resource; "
+            "injecting it into the frontend instead",
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: X120XConfigEntry) -> None:
+    """Take the card's resource away with the last UPS.
+
+    A resource pointing at a path nobody serves any more would fail to load on
+    every dashboard, forever, long after the integration itself is gone.
+    """
+    remaining = [
+        other
+        for other in hass.config_entries.async_entries(DOMAIN)
+        if other.entry_id != entry.entry_id
+    ]
+    if remaining:
+        return
+    resources = _lovelace_resources(hass)
+    if resources is None:
+        return
+    card_url = f"{URL_BASE}/{CARD_FILENAME}"
+    try:
+        await resources.async_get_info()
+        for item in list(resources.async_items()):
+            if _is_our_resource(item, card_url):
+                await resources.async_delete_item(item["id"])
+    except Exception:  # noqa: BLE001 - removal must not fail over a leftover
+        _LOGGER.warning(
+            "Could not remove the X120X card resource; delete it by hand under "
+            "Settings -> Dashboards -> Resources",
+            exc_info=True,
+        )
