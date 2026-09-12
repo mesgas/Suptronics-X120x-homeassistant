@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 from homeassistant.components.frontend import add_extra_js_url
@@ -16,6 +17,7 @@ from .const import (
     CARD_FILENAME,
     CONF_MODEL,
     DATA_FRONTEND_REGISTERED,
+    DATA_FRONTEND_TOKEN,
     DOMAIN,
     MANUFACTURER,
     MODEL_URLS,
@@ -130,11 +132,11 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
 
     try:
         await hass.http.async_register_static_paths(
-            # Cache it. The URL already carries ?v=<integration version>, so a
-            # new release is a new URL and can never be served stale -- while
-            # re-downloading 34 kB on every page load delays the module enough
-            # that the dashboard can give up waiting for it and report the card
-            # as a missing custom element.
+            # Cache it. The URL carries a cache key that changes with every
+            # release and every restart (see below), so nothing can be served
+            # stale for long -- while re-downloading 34 kB on every page load
+            # delays the module enough that the dashboard can give up waiting
+            # for it and report the card as a missing custom element.
             [StaticPathConfig(URL_BASE, str(frontend_dir), cache_headers=True)]
         )
     except (RuntimeError, ValueError) as err:
@@ -151,7 +153,16 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
             card_url,
         )
 
-    add_extra_js_url(hass, f"{card_url}?v={VERSION}")
+    # The cache key is the version *and* a token minted once per Home Assistant
+    # run. Versioning alone keeps an URL alive from one release to the next, so
+    # a browser that happens to cache a truncated response keeps serving itself
+    # that truncated response for weeks, and no ordinary reload dislodges it --
+    # the card is simply missing and nothing explains why. With the token, the
+    # file is still cached for the whole run (which is what stops the reload
+    # storm that made the dashboard give up waiting for the module), and a
+    # restart is enough to get a clean copy.
+    token = domain_data.setdefault(DATA_FRONTEND_TOKEN, uuid.uuid4().hex[:8])
+    add_extra_js_url(hass, f"{card_url}?v={VERSION}.{token}")
     domain_data[DATA_FRONTEND_REGISTERED] = True
     _LOGGER.info(
         "X120X dashboard card served at %s; it appears in the card picker as "

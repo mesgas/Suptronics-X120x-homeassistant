@@ -46,6 +46,8 @@ MODEL_URLS: Final = {
 URL_BASE: Final = "/x120x_static"
 CARD_FILENAME: Final = "x120x-ups-card.js"
 DATA_FRONTEND_REGISTERED: Final = "frontend_registered"
+# Minted once per Home Assistant run, so a restart is a new cache key.
+DATA_FRONTEND_TOKEN: Final = "frontend_token"
 
 # --- Configuration keys -------------------------------------------------------
 
