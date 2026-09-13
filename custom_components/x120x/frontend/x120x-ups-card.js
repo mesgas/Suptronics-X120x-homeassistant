@@ -18,7 +18,7 @@
  *   entities: optional explicit overrides, keyed by the roles below
  */
 
-const CARD_VERSION = "1.3.1";
+const CARD_VERSION = "1.3.2";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -84,7 +84,11 @@ const ROLES = {
     domain === "binary_sensor" && attrs.device_class === "battery_charging",
   low: (domain, attrs) =>
     domain === "binary_sensor" && attrs.device_class === "battery",
-  charge_switch: (domain) => domain === "switch",
+  // Not just "the switch": the device also has the shutdown-on-low-battery
+  // switch, and taking whichever comes first would put the charge button on
+  // the wrong one. Only the charging switch carries the charge window.
+  charge_switch: (domain, attrs) =>
+    domain === "switch" && attrs.charge_limit_min !== undefined,
 };
 
 const STATUS_THEME = {
