@@ -18,7 +18,7 @@
  *   entities: optional explicit overrides, keyed by the roles below
  */
 
-const CARD_VERSION = "1.3.0";
+const CARD_VERSION = "1.3.1";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -428,9 +428,14 @@ class X120XUpsCard extends HTMLElement {
       "stroke-dashoffset",
       GAUGE_CIRCUMFERENCE * (1 - clamped / 100)
     );
-    tweenNumber(this._el.percent, clamped, (value) =>
-      value.toFixed(value < 10 ? 1 : 0)
-    );
+    // One decimal whenever the reading has one, as the sensor itself shows
+    // it. Rounding to whole numbers turned 99.7% into "100", which is the one
+    // figure a battery display must never claim before it is true -- and it
+    // contradicted the entity's own more-info dialog beside it. The decimals
+    // are decided by where the count ends, not by each frame, so a tween
+    // towards 63% does not flicker through 62.4 on the way.
+    const decimals = Math.round(clamped * 10) % 10 === 0 ? 0 : 1;
+    tweenNumber(this._el.percent, clamped, (value) => value.toFixed(decimals));
     this._el.voltage.textContent =
       voltage === null ? "--" : `${voltage.toFixed(3)} V`;
 
