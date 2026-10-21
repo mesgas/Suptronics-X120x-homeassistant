@@ -24,7 +24,7 @@
  * wires of the diagram -- mains to pack to Pi, or pack to Pi in a blackout.
  */
 
-const CARD_VERSION = "2.0.0";
+const CARD_VERSION = "2.0.1";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -1351,14 +1351,20 @@ ha-card.x120x[data-variant="compact"] { padding: 14px 16px 16px; }
 ha-card.x120x[data-variant="slim"] {
   display: grid;
   grid-template-columns: 92px 1fr;
-  grid-template-areas: "gauge head" "gauge chips";
+  grid-template-areas: "gauge head" "gauge chips" "flow flow";
   align-items: center;
   gap: 6px 14px;
   padding: 12px 16px;
 }
 [data-variant="slim"] .head { grid-area: head; }
-[data-variant="slim"] .hero { grid-area: gauge; }
+/* The hero's two halves become cells of the slim grid: the dial beside the
+   chips, and the diagram -- when show_flow asks for it -- across the whole
+   card underneath, instead of shrunk under the dial. */
+[data-variant="slim"] .hero { display: contents; }
+[data-variant="slim"] .gauge { grid-area: gauge; }
+[data-variant="slim"] .flow { grid-area: flow; width: 100%; max-width: 320px; justify-self: center; margin-top: 6px; }
 [data-variant="slim"] .chips { grid-area: chips; }
+[data-variant="slim"] .charge-row, [data-variant="slim"] .spark { grid-column: 1 / -1; }
 [data-variant="slim"] .gauge { max-width: 92px; }
 [data-variant="slim"] .percent { font-size: 1.3rem; }
 [data-variant="slim"] .percent i { font-size: .7rem; }
