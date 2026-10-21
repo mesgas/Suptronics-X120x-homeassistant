@@ -13,12 +13,18 @@
  *   variant: full | compact | slim | gauge   (default: full)
  *   name: optional title override
  *   device_id: optional, when more than one UPS is configured
+ *   hours: how far back the level trace looks (default 24)
  *   show_flow / show_sparkline / show_chips / show_button:
  *       force a single block on or off, whatever the variant decided
  *   entities: optional explicit overrides, keyed by the roles below
+ *
+ * Everything on it moves for a reason: the ring's ticks light up to the
+ * charge, a comet laps it while the pack charges (and runs backwards while it
+ * drains), the cell's liquid sways and bubbles, and energy travels along the
+ * wires of the diagram -- mains to pack to Pi, or pack to Pi in a blackout.
  */
 
-const CARD_VERSION = "1.3.2";
+const CARD_VERSION = "2.0.0";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -91,19 +97,92 @@ const ROLES = {
     domain === "switch" && attrs.charge_limit_min !== undefined,
 };
 
-const STATUS_THEME = {
-  online: { tint: "#3ddc97", label: "On line" },
-  charging: { tint: "#4fd1c5", label: "Charging" },
-  on_battery: { tint: "#f6c445", label: "On battery" },
-  low_battery: { tint: "#ff5c5c", label: "Battery low" },
-  unknown: { tint: "#8a94a6", label: "Unknown" },
+const STATUS_TINT = {
+  online: "#3ddc97",
+  charging: "#4fd1c5",
+  on_battery: "#f6c445",
+  low_battery: "#ff5c5c",
+  unknown: "#8a94a6",
 };
 
-const GAUGE_RADIUS = 78;
+/** The card speaks the dashboard's language: Italian or English. */
+const STRINGS = {
+  en: {
+    online: "On line",
+    charging: "Charging",
+    on_battery: "On battery",
+    low_battery: "Battery low",
+    unknown: "Unknown",
+    mains: "Mains",
+    pack: "Battery",
+    pi: "Raspberry Pi",
+    voltage: "Voltage",
+    window: "Charge window",
+    power: "Power",
+    mains_ok: "Mains OK",
+    mains_lost: "Mains lost",
+    not_charging: "Not charging",
+    discharging: "Discharging",
+    battery_low: "Battery low",
+    battery_ok: "Battery healthy",
+    hold: (min, max) => `Hold ${min}–${max}%`,
+    no_limit: "No limit",
+    charge: "Charging",
+    charge_on: "Enabled",
+    charge_off: "Paused",
+    since: "since",
+    trace: (hours, min, max) => `Last ${hours} h · min ${min}% · max ${max}%`,
+    empty:
+      "No X120X device found yet. If the integration is set up, reload the dashboard; otherwise name the entities explicitly in the card config.",
+  },
+  it: {
+    online: "Dalla rete",
+    charging: "In carica",
+    on_battery: "A batteria",
+    low_battery: "Batteria scarica",
+    unknown: "Sconosciuto",
+    mains: "Rete",
+    pack: "Batteria",
+    pi: "Raspberry Pi",
+    voltage: "Tensione",
+    window: "Finestra di carica",
+    power: "Alimentazione",
+    mains_ok: "Rete presente",
+    mains_lost: "Rete assente",
+    not_charging: "Non in carica",
+    discharging: "In scarica",
+    battery_low: "Batteria bassa",
+    battery_ok: "Batteria in salute",
+    hold: (min, max) => `Mantiene ${min}–${max}%`,
+    no_limit: "Nessun limite",
+    charge: "Ricarica",
+    charge_on: "Attiva",
+    charge_off: "In pausa",
+    since: "da",
+    trace: (hours, min, max) => `Ultime ${hours} h · min ${min}% · max ${max}%`,
+    empty:
+      "Nessuna UPS X120X trovata. Se l'integrazione è configurata ricarica la dashboard, altrimenti indica le entità nella configurazione della card.",
+  },
+};
+
+// Gauge geometry, in the 200x200 viewBox.
+const GAUGE_RADIUS = 72;
 const GAUGE_CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
-const WINDOW_RADIUS = 92;
+const WINDOW_RADIUS = 96;
 const WINDOW_CIRCUMFERENCE = 2 * Math.PI * WINDOW_RADIUS;
+const TICKS = 48;
+
+// The pack in the diagram: its liquid spans these y values.
+const CELL_TOP = 28;
+const CELL_BOTTOM = 110;
+
+// A single 18650 cell: empty at 3.0 V, full at 4.2 V.
+const CELL_EMPTY_V = 3.0;
+const CELL_FULL_V = 4.2;
+
 const HISTORY_POINTS = 48;
+const SPARK_W = 300;
+const SPARK_H = 54;
 
 // How far back the sparkline looks, and how often it asks the recorder again.
 const DEFAULT_HISTORY_HOURS = 24;
@@ -121,9 +200,14 @@ const VARIANTS = {
   gauge: { flow: false, sparkline: false, chips: false, button: false },
 };
 
-// Geometry of the battery cell drawing, used to size the liquid.
-const CELL_TOP = 21.5;
-const CELL_HEIGHT = 57;
+/** One wave of liquid, wide enough to slide by a whole period forever. */
+function wavePath(amplitude, period, depth) {
+  let d = `M${-period * 2},0`;
+  for (let x = -period * 2; x < period * 5; x += period) {
+    d += ` q${period / 4},${-amplitude} ${period / 2},0 t${period / 2},0`;
+  }
+  return `${d} V${depth} H${-period * 2} Z`;
+}
 
 class X120XUpsCard extends HTMLElement {
   constructor() {
@@ -136,10 +220,15 @@ class X120XUpsCard extends HTMLElement {
     this._historyAt = 0;
     this._fetching = false;
     this._built = false;
+    this._drawn = false;
   }
 
   static getStubConfig() {
     return { type: "custom:x120x-ups-card" };
+  }
+
+  static getConfigElement() {
+    return document.createElement("x120x-ups-card-editor");
   }
 
   setConfig(config) {
@@ -153,6 +242,7 @@ class X120XUpsCard extends HTMLElement {
     this._config = { ...config, variant };
     this._entities = null;
     this._built = false;
+    this._drawn = false;
     this.shadowRoot.innerHTML = "";
   }
 
@@ -173,12 +263,21 @@ class X120XUpsCard extends HTMLElement {
 
   getCardSize() {
     const parts = VARIANTS[this._config.variant] || VARIANTS.full;
-    return parts.flow ? 5 : parts.chips ? 3 : 2;
+    return parts.flow ? 7 : parts.chips ? 4 : 3;
+  }
+
+  getGridOptions() {
+    const variant = this._config.variant;
+    if (variant === "gauge") return { columns: 6, rows: "auto", min_columns: 3 };
+    if (variant === "slim") return { columns: 12, rows: "auto", min_columns: 6 };
+    return { columns: 12, rows: "auto", min_columns: 6 };
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._built) {
+    // The registry can arrive a moment after the first states: until the pack
+    // is found, every update tries again.
+    if (!this._built || !this._entities || !this._entities.capacity) {
       this._build();
     }
     this._update();
@@ -189,6 +288,13 @@ class X120XUpsCard extends HTMLElement {
     ) {
       this._fetchHistory();
     }
+  }
+
+  get _t() {
+    const language = String(
+      (this._hass && ((this._hass.locale && this._hass.locale.language) || this._hass.language)) || "en"
+    ).slice(0, 2);
+    return STRINGS[language] || STRINGS.en;
   }
 
   /**
@@ -205,9 +311,8 @@ class X120XUpsCard extends HTMLElement {
     this._fetching = true;
     this._historyAt = Date.now();
     try {
-      const hours = Number(this._config.hours) || DEFAULT_HISTORY_HOURS;
       const end = new Date();
-      const start = new Date(end.getTime() - hours * 3600 * 1000);
+      const start = new Date(end.getTime() - this._hours() * 3600 * 1000);
       const response = await this._hass.callWS({
         type: "history/history_during_period",
         start_time: start.toISOString(),
@@ -230,6 +335,10 @@ class X120XUpsCard extends HTMLElement {
     } finally {
       this._fetching = false;
     }
+  }
+
+  _hours() {
+    return Number(this._config.hours) || DEFAULT_HISTORY_HOURS;
   }
 
   /** Average the raw history into evenly spaced buckets. */
@@ -343,13 +452,15 @@ class X120XUpsCard extends HTMLElement {
     card.className = "x120x";
     this.shadowRoot.innerHTML = "";
     this.shadowRoot.append(style, card);
+    this._built = true;
 
     if (!this._entities || !this._entities.capacity) {
+      this._el = null;
       card.innerHTML = `<div class="empty">
         <div class="empty-title">X120X UPS</div>
-        <p>No X120X device found yet. If the integration is set up, reload the
-        dashboard; otherwise name the entities explicitly in the card config.</p>
+        <p></p>
       </div>`;
+      card.querySelector("p").textContent = this._t.empty;
       return;
     }
 
@@ -366,22 +477,43 @@ class X120XUpsCard extends HTMLElement {
     );
     this._el.gaugeValue.setAttribute("stroke-dashoffset", GAUGE_CIRCUMFERENCE);
 
+    // The ticks light up one after another as the charge climbs.
+    this._el.ticks.innerHTML = Array.from({ length: TICKS }, (_, i) => {
+      const a = (i / TICKS) * 2 * Math.PI - Math.PI / 2;
+      const p = (r) =>
+        `${(100 + r * Math.cos(a)).toFixed(2)},${(100 + r * Math.sin(a)).toFixed(2)}`;
+      return `<path class="tick" d="M${p(84)} L${p(89)}" style="transition-delay:${i * 12}ms"/>`;
+    }).join("");
+    this._ticks = [...this._el.ticks.querySelectorAll(".tick")];
+
     // --- layout ----------------------------------------------------------
     // The blocks are hidden rather than removed, so _update can stay ignorant
     // of the variant and keep writing to the same nodes.
     this._shown = this._parts();
     card.dataset.variant = this._config.variant;
+    // The roomy layouts get stat tiles; the slim and gauge ones, pills.
+    card.dataset.chips =
+      this._config.variant === "slim" || this._config.variant === "gauge" ? "pills" : "stats";
     // toggleAttribute, not `.hidden`: `hidden` is defined on HTMLElement and
-    // not on SVGElement, so assigning it to the sparkline <svg> would silently
-    // create an inert JS property and leave the element on screen as an empty
-    // 30px band in every compact variant.
+    // not on SVGElement, so assigning it to an <svg> would silently create an
+    // inert JS property and leave the element on screen.
     this._el.flow.toggleAttribute("hidden", !this._shown.flow);
-    this._el.sparkSvg.toggleAttribute("hidden", !this._shown.sparkline);
+    this._el.spark.toggleAttribute("hidden", !this._shown.sparkline);
     this._el.chips.toggleAttribute("hidden", !this._shown.chips);
+
+    const t = this._t;
+    this._el.lblMains.textContent = t.mains;
+    this._el.lblPack.textContent = t.pack;
+    this._el.lblPi.textContent = t.pi;
+    this._el.lblVolt.textContent = t.voltage;
+    this._el.lblWindow.textContent = t.window;
+    this._el.lblPower.textContent = t.power;
+    this._el.lblCharge.textContent = t.charge;
 
     // Anything carrying a role opens the matching more-info dialog.
     for (const node of card.querySelectorAll("[data-role]")) {
-      node.addEventListener("click", () => {
+      node.addEventListener("click", (ev) => {
+        ev.stopPropagation();
         const entityId = this._entities[node.dataset.role];
         if (!entityId) return;
         const event = new Event("hass-more-info", {
@@ -399,14 +531,13 @@ class X120XUpsCard extends HTMLElement {
       if (!entityId) return;
       this._hass.callService("switch", "toggle", { entity_id: entityId });
     });
-
-    this._built = true;
   }
 
   /* ---------------------------------------------------------------- update */
 
   _update() {
     if (!this._built || !this._el) return;
+    const t = this._t;
 
     const capacity = this._number("capacity", 0);
     const voltage = this._number("voltage");
@@ -415,16 +546,25 @@ class X120XUpsCard extends HTMLElement {
     const low = this._isOn("low");
     const statusState = this._state("status");
     const statusKey = statusState ? statusState.state : "unknown";
-    const theme = STATUS_THEME[statusKey] || STATUS_THEME.unknown;
+    const tint = STATUS_TINT[statusKey] || STATUS_TINT.unknown;
+    const card = this.shadowRoot.querySelector("ha-card");
 
-    this.style.setProperty("--x-tint", theme.tint);
+    // One word for everything that animates: where the energy is going.
+    let mode = "mains";
+    if (low || statusKey === "low_battery") mode = acOn ? "charging" : "low";
+    else if (!acOn) mode = "battery";
+    else if (charging) mode = "charging";
+    card.dataset.mode = mode;
+    card.dataset.alert = String(low || statusKey === "low_battery");
+    this.style.setProperty("--x-tint", tint);
 
     // --- headline ---------------------------------------------------------
     this._el.title.textContent =
       this._config.name || this._deviceName() || "X120X UPS";
-    this._el.statusText.textContent = statusState
-      ? this._displayState(statusState)
-      : theme.label;
+    this._el.statusText.textContent =
+      statusState && this._hass.formatEntityState
+        ? this._displayState(statusState)
+        : t[statusKey] || t.unknown;
 
     // --- gauge ------------------------------------------------------------
     const clamped = Math.max(0, Math.min(100, capacity));
@@ -432,6 +572,8 @@ class X120XUpsCard extends HTMLElement {
       "stroke-dashoffset",
       GAUGE_CIRCUMFERENCE * (1 - clamped / 100)
     );
+    const lit = Math.round((clamped / 100) * TICKS);
+    this._ticks.forEach((tick, i) => tick.classList.toggle("on", i < lit));
     // One decimal whenever the reading has one, as the sensor itself shows
     // it. Rounding to whole numbers turned 99.7% into "100", which is the one
     // figure a battery display must never claim before it is true -- and it
@@ -442,48 +584,53 @@ class X120XUpsCard extends HTMLElement {
     tweenNumber(this._el.percent, clamped, (value) => value.toFixed(decimals));
     this._el.voltage.textContent =
       voltage === null ? "--" : `${voltage.toFixed(3)} V`;
-
     const levelState = this._state("level");
     this._el.levelText.textContent = levelState
       ? this._displayState(levelState)
       : "";
 
     // --- charge window ----------------------------------------------------
-    this._renderChargeWindow();
+    this._renderChargeWindow(this._chargeWindow(), clamped);
 
-    // --- battery cell -----------------------------------------------------
-    // The liquid grows upwards, so its top edge moves as the fill changes.
-    const fill = (CELL_HEIGHT * clamped) / 100;
-    this._el.cellFill.setAttribute("y", CELL_TOP + CELL_HEIGHT - fill);
-    this._el.cellFill.setAttribute("height", Math.max(fill, 0.5));
+    // --- the pack in the diagram -----------------------------------------
+    // The liquid's surface sits at the charge; the bubbles rise that far.
+    const surface = CELL_BOTTOM - ((CELL_BOTTOM - CELL_TOP) * clamped) / 100;
+    this._el.liquid.style.transform = `translateY(${surface.toFixed(1)}px)`;
+    this._el.flow.style.setProperty(
+      "--depth",
+      `${Math.max(6, CELL_BOTTOM - surface - 4).toFixed(1)}px`
+    );
 
-    this.classList.toggle("is-charging", charging);
-    this.classList.toggle("is-alert", low || statusKey === "low_battery");
+    // --- stat tiles and pills --------------------------------------------
+    const voltFill =
+      voltage === null
+        ? 0
+        : Math.max(0, Math.min(100, ((voltage - CELL_EMPTY_V) / (CELL_FULL_V - CELL_EMPTY_V)) * 100));
+    this._el.voltValue.textContent = voltage === null ? "--" : `${voltage.toFixed(2)} V`;
+    this._el.voltBar.style.width = `${voltFill}%`;
 
-    // --- flow lane --------------------------------------------------------
-    // Energy always travels towards the Pi; only the mains leg goes quiet.
-    this._el.flow.dataset.direction = acOn ? "in" : "out";
-    this._el.mains.classList.toggle("off", !acOn);
+    const acState = this._state("ac");
+    const since = acState ? this._relative(acState.last_changed) : "";
+    this._el.powerValue.textContent = acOn ? t.mains_ok : t.mains_lost;
+    this._el.powerSince.textContent = since ? `${t.since} ${since}` : "";
+    this._el.powerTile.dataset.good = String(acOn);
 
-    // --- chips ------------------------------------------------------------
-    this._setChip("chipAc", acOn ? "Mains OK" : "Mains lost", acOn);
+    this._setChip("chipAc", acOn ? t.mains_ok : t.mains_lost, acOn);
     this._setChip(
       "chipCharge",
-      charging ? "Charging" : acOn ? "Not charging" : "Discharging",
+      charging ? t.charging : acOn ? t.not_charging : t.discharging,
       charging || acOn
     );
-    this._setChip("chipLow", low ? "Battery low" : "Battery healthy", !low);
+    this._setChip("chipLow", low ? t.battery_low : t.battery_ok, !low);
 
     const chargeSwitch = this._state("charge_switch");
     if (chargeSwitch && this._shown.button) {
       const on = chargeSwitch.state === "on";
-      this._el.chargeToggle.hidden = false;
-      this._el.chargeToggle.dataset.on = String(on);
-      this._el.chargeToggle.textContent = on
-        ? "Charging enabled"
-        : "Charging paused";
+      this._el.chargeRow.hidden = false;
+      this._el.chargeToggle.setAttribute("aria-checked", String(on));
+      this._el.chargeState.textContent = on ? t.charge_on : t.charge_off;
     } else {
-      this._el.chargeToggle.hidden = true;
+      this._el.chargeRow.hidden = true;
     }
 
     if (this._shown.sparkline) {
@@ -492,38 +639,43 @@ class X120XUpsCard extends HTMLElement {
     }
   }
 
-  /**
-   * Draw the band the integration keeps the pack inside, as an outer arc on
-   * the gauge plus a chip. Hidden when charging is not limited.
-   */
-  _renderChargeWindow() {
-    const arc = this._el.gaugeWindow;
-    const chip = this._el.chipWindow;
+  /** The band the integration keeps the pack inside, or null when unlimited. */
+  _chargeWindow() {
     const attrs = (this._state("charge_switch") || {}).attributes || {};
     const min = Number(attrs.charge_limit_min);
     const max = Number(attrs.charge_limit_max);
-
     const limited =
       Number.isFinite(min) && Number.isFinite(max) && max < 100 && max > min;
+    return limited ? { min, max } : null;
+  }
 
-    if (!limited) {
-      if (arc) arc.style.opacity = "0";
-      if (chip) chip.hidden = true;
+  /**
+   * Draw the charge window twice: as an outer arc on the gauge, and as a band
+   * on a 0-100 bar with the current level as a marker inside or outside it.
+   */
+  _renderChargeWindow(band, level) {
+    const t = this._t;
+    const arc = this._el.gaugeWindow;
+    this._el.windowMarker.style.left = `${level}%`;
+    if (!band) {
+      arc.style.opacity = "0";
+      this._el.windowBand.style.left = "0%";
+      this._el.windowBand.style.width = "100%";
+      this._el.windowValue.textContent = t.no_limit;
+      this._el.chipWindow.hidden = true;
       return;
     }
-
+    const { min, max } = band;
     const length = (WINDOW_CIRCUMFERENCE * (max - min)) / 100;
-    arc.setAttribute(
-      "stroke-dasharray",
-      `${length} ${WINDOW_CIRCUMFERENCE - length}`
-    );
+    arc.setAttribute("stroke-dasharray", `${length} ${WINDOW_CIRCUMFERENCE - length}`);
     arc.setAttribute("stroke-dashoffset", -(WINDOW_CIRCUMFERENCE * min) / 100);
     arc.style.opacity = "1";
-
-    chip.hidden = false;
-    chip.querySelector(".chip-text").textContent = `Hold ${Math.round(
-      min
-    )}-${Math.round(max)}%`;
+    this._el.windowBand.style.left = `${min}%`;
+    this._el.windowBand.style.width = `${max - min}%`;
+    const text = t.hold(Math.round(min), Math.round(max));
+    this._el.windowValue.textContent = `${Math.round(min)}–${Math.round(max)}%`;
+    this._el.chipWindow.hidden = false;
+    this._el.chipWindow.querySelector(".chip-text").textContent = text;
   }
 
   _setChip(ref, text, good) {
@@ -545,6 +697,18 @@ class X120XUpsCard extends HTMLElement {
     return state.state.replace(/_/g, " ");
   }
 
+  /** "3 hours ago" without the "ago": how long the mains have been in or out. */
+  _relative(iso) {
+    const then = Date.parse(iso);
+    if (!Number.isFinite(then)) return "";
+    const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+    if (minutes < 1) return "";
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 48) return `${hours} h`;
+    return `${Math.floor(hours / 24)} ${this._t === STRINGS.it ? "g" : "d"}`;
+  }
+
   _deviceName() {
     const device =
       this._hass.devices && this._deviceId
@@ -563,9 +727,7 @@ class X120XUpsCard extends HTMLElement {
   }
 
   _drawSparkline() {
-    const line = this._el.spark;
-    const area = this._el.sparkArea;
-    if (!line) return;
+    const { sparkLine, sparkArea, sparkTip, sparkNote } = this._el;
 
     // The recorder's trace when there is one, otherwise whatever has been seen
     // since the card was opened.
@@ -575,27 +737,33 @@ class X120XUpsCard extends HTMLElement {
     if (series.length < 2) {
       // A faint dashed baseline: it holds the space without pretending to be
       // a reading, until enough samples have come in to draw a real trace.
-      line.setAttribute("points", "0,11 100,11");
-      line.classList.add("empty");
-      if (area) area.setAttribute("d", "");
+      sparkLine.setAttribute("d", `M0,${SPARK_H - 6} L${SPARK_W},${SPARK_H - 6}`);
+      sparkLine.classList.add("empty");
+      sparkArea.setAttribute("d", "");
+      sparkTip.hidden = true;
+      sparkNote.textContent = "";
       return;
     }
-    line.classList.remove("empty");
+    sparkLine.classList.remove("empty");
 
     // Scale to the observed range, so small drifts stay readable.
     const min = Math.min(...series);
     const max = Math.max(...series);
     const span = Math.max(max - min, 1);
-    const stepX = 100 / (series.length - 1);
-    const coords = series.map((value, index) => {
-      const x = index * stepX;
-      const y = 19 - ((value - min) / span) * 16;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    });
+    const x = (i) => (i / (series.length - 1)) * SPARK_W;
+    const y = (v) => SPARK_H - 4 - ((v - min) / span) * (SPARK_H - 16);
+    const coords = series.map((v, i) => `${x(i).toFixed(2)},${y(v).toFixed(2)}`);
+    sparkLine.setAttribute("d", `M${coords.join(" L")}`);
+    sparkArea.setAttribute("d", `M0,${SPARK_H} L${coords.join(" L")} L${SPARK_W},${SPARK_H} Z`);
 
-    line.setAttribute("points", coords.join(" "));
-    if (area) {
-      area.setAttribute("d", `M0,22 L${coords.join(" L")} L100,22 Z`);
+    // A beating dot on the latest reading.
+    sparkTip.hidden = false;
+    sparkTip.style.bottom = `${((SPARK_H - y(series[series.length - 1])) / SPARK_H) * 100}%`;
+    sparkNote.textContent = this._t.trace(this._hours(), Math.round(min), Math.round(max));
+
+    if (!this._drawn && !REDUCED_MOTION.matches) {
+      this._drawn = true;
+      this._el.spark.classList.add("reveal");
     }
   }
 }
@@ -603,38 +771,32 @@ class X120XUpsCard extends HTMLElement {
 /* ---------------------------------------------------------------- markup */
 
 const TEMPLATE = `
-<div class="glow"></div>
+<div class="aurora"></div>
 <div class="head">
   <div class="title" data-ref="title">X120X UPS</div>
-  <div class="status" data-ref="status" data-role="status">
+  <div class="status" data-role="status">
     <span class="dot"></span>
     <span data-ref="statusText">--</span>
   </div>
 </div>
 
-<div class="body">
+<div class="hero">
   <div class="gauge" data-role="capacity">
     <svg viewBox="0 0 200 200" aria-hidden="true">
       <defs>
         <linearGradient id="x-arc" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="var(--x-tint)" stop-opacity="0.3"/>
+          <stop offset="0%" stop-color="var(--x-tint)" stop-opacity="0.35"/>
           <stop offset="100%" stop-color="var(--x-tint)"/>
         </linearGradient>
-        <linearGradient id="x-liquid" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--x-tint)"/>
-          <stop offset="100%" stop-color="var(--x-tint)" stop-opacity="0.6"/>
-        </linearGradient>
-        <linearGradient id="x-spark" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="var(--x-tint)" stop-opacity="0.4"/>
-          <stop offset="100%" stop-color="var(--x-tint)" stop-opacity="0"/>
-        </linearGradient>
       </defs>
-      <circle class="window" data-ref="gaugeWindow" cx="100" cy="100" r="92"
+      <circle class="halo" cx="100" cy="100" r="${GAUGE_RADIUS}"/>
+      <g class="ticks" data-ref="ticks"></g>
+      <circle class="window" data-ref="gaugeWindow" cx="100" cy="100" r="${WINDOW_RADIUS}"
               transform="rotate(-90 100 100)"/>
-      <circle class="track" cx="100" cy="100" r="78"/>
-      <circle class="value" data-ref="gaugeValue" cx="100" cy="100" r="78"
+      <circle class="track" cx="100" cy="100" r="${GAUGE_RADIUS}"/>
+      <circle class="value" data-ref="gaugeValue" cx="100" cy="100" r="${GAUGE_RADIUS}"
               transform="rotate(-90 100 100)"/>
-      <circle class="sweep" cx="100" cy="100" r="78"/>
+      <g class="comet"><circle cx="100" cy="${100 - GAUGE_RADIUS}" r="4.5"/></g>
     </svg>
     <div class="readout">
       <div class="percent"><span data-ref="percent">--</span><i>%</i></div>
@@ -643,62 +805,126 @@ const TEMPLATE = `
     </div>
   </div>
 
-  <div class="side">
-    <div class="flow" data-ref="flow" data-direction="in">
-      <div class="node mains" data-ref="mains" data-role="ac">
-        <svg class="glyph" viewBox="0 0 24 24"><path d="M7 2v6h2V2H7zm8 0v6h2V2h-2zM6 9v4a6 6 0 0 0 5 5.9V22h2v-3.1A6 6 0 0 0 18 13V9H6z"/></svg>
-        <span>Mains</span>
-      </div>
-      <div class="lane lane-in"><span class="pulse"></span></div>
-      <div class="node ups" data-role="charging">
-        <svg class="cell" viewBox="0 0 60 100" aria-hidden="true">
-          <rect class="cap" x="24" y="12" width="12" height="6" rx="2"/>
-          <rect class="shell" x="14" y="18" width="32" height="64" rx="7"/>
-          <clipPath id="x-cell-clip">
-            <rect x="17.5" y="21.5" width="25" height="57" rx="5"/>
-          </clipPath>
-          <g clip-path="url(#x-cell-clip)">
-            <rect class="liquid" data-ref="cellFill" x="17.5" y="78" width="25" height="0"/>
-            <g class="bubbles">
-              <circle cx="24" cy="72" r="2"/>
-              <circle cx="34" cy="76" r="1.5"/>
-              <circle cx="29" cy="80" r="2.4"/>
+  <div class="flow" data-ref="flow">
+    <svg viewBox="0 0 330 140" aria-hidden="true">
+      <defs>
+        <clipPath id="x-cell-clip"><rect x="139" y="${CELL_TOP}" width="52" height="${CELL_BOTTOM - CELL_TOP}" rx="9"/></clipPath>
+        <linearGradient id="x-pcb" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#3fb27f"/><stop offset="1" stop-color="#1f7a52"/>
+        </linearGradient>
+      </defs>
+
+      <!-- wires: a dim track, and the energy that runs along it -->
+      <path class="wire-track" d="M74 72 C 100 72, 108 72, 134 72"/>
+      <path class="wire-track" d="M196 72 C 222 72, 228 72, 252 72"/>
+      <path class="energy e-in" d="M74 72 C 100 72, 108 72, 134 72"/>
+      <path class="energy e-out" d="M196 72 C 222 72, 228 72, 252 72"/>
+
+      <!-- mains socket -->
+      <g class="mains" data-role="ac">
+        <circle class="socket" cx="42" cy="72" r="28"/>
+        <circle class="socket-face" cx="42" cy="72" r="19"/>
+        <circle class="pin" cx="35" cy="72" r="3.4"/>
+        <circle class="pin" cx="49" cy="72" r="3.4"/>
+        <path class="cut" d="M24 54 L60 90"/>
+        <text class="node-label" x="42" y="122" text-anchor="middle" data-ref="lblMains"></text>
+      </g>
+
+      <!-- the pack -->
+      <g class="pack" data-role="charging">
+        <rect class="pack-cap" x="153" y="14" width="24" height="9" rx="3"/>
+        <rect class="pack-shell" x="134" y="22" width="62" height="94" rx="13"/>
+        <g clip-path="url(#x-cell-clip)">
+          <g class="liquid" data-ref="liquid">
+            <g transform="translate(139 0)">
+              <g class="wave back"><path d="${wavePath(3, 26, 120)}"/></g>
+              <g class="wave front"><path d="${wavePath(4, 34, 120)}"/></g>
             </g>
+            <circle class="bub" cx="152" cy="0" r="2.2"/>
+            <circle class="bub" cx="166" cy="0" r="1.6"/>
+            <circle class="bub" cx="179" cy="0" r="2.6"/>
           </g>
-          <path class="bolt" d="M33 32 L25 54 L31 54 L28 70 L38 46 L32 46 Z"/>
-        </svg>
-        <span>UPS</span>
-      </div>
-      <div class="lane lane-out"><span class="pulse"></span></div>
-      <div class="node pi">
-        <svg class="glyph" viewBox="0 0 24 24"><path d="M8 2v2H6v2H4v12h2v2h2v-2h8v2h2v-2h2V6h-2V4h-2V2h-2v2H10V2H8zm1 6h6v8H9V8z"/></svg>
-        <span>Pi</span>
-      </div>
-    </div>
+        </g>
+        <rect class="pack-shine" x="142" y="32" width="5" height="70" rx="2.5"/>
+        <path class="bolt" d="M170 40 L156 72 L166 72 L161 98 L177 62 L167 62 Z"/>
+        <text class="node-label" x="165" y="134" text-anchor="middle" data-ref="lblPack"></text>
+      </g>
 
-    <svg class="spark" data-ref="sparkSvg" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true">
-      <path class="spark-area" data-ref="sparkArea" d=""/>
-      <polyline data-ref="spark" points=""/>
+      <!-- the Raspberry Pi -->
+      <g class="pi">
+        <rect class="pcb" x="252" y="44" width="72" height="56" rx="6" fill="url(#x-pcb)"/>
+        <g class="gpio">${Array.from({ length: 10 }, (_, i) => `<rect x="${258 + i * 6}" y="48" width="3.4" height="3.4" rx=".6"/>`).join("")}</g>
+        <rect class="soc" x="270" y="62" width="22" height="22" rx="2.5"/>
+        <rect class="port-usb" x="314" y="56" width="10" height="12" rx="1.5"/>
+        <rect class="port-usb" x="314" y="74" width="10" height="12" rx="1.5"/>
+        <circle class="led-pwr" cx="260" cy="92" r="2.2"/>
+        <circle class="led-act" cx="267" cy="92" r="2.2"/>
+        <text class="node-label" x="288" y="122" text-anchor="middle" data-ref="lblPi"></text>
+      </g>
     </svg>
-
-    <div class="chips" data-ref="chips">
-      <div class="chip" data-ref="chipAc" data-role="ac">
-        <span class="chip-dot"></span><span class="chip-text">--</span>
-      </div>
-      <div class="chip" data-ref="chipCharge" data-role="charging">
-        <span class="chip-dot"></span><span class="chip-text">--</span>
-      </div>
-      <div class="chip" data-ref="chipLow" data-role="low">
-        <span class="chip-dot"></span><span class="chip-text">--</span>
-      </div>
-      <div class="chip window-chip" data-ref="chipWindow" data-role="charge_switch" data-good="true" hidden>
-        <span class="chip-dot"></span><span class="chip-text">--</span>
-      </div>
-    </div>
-
-    <button class="charge-toggle" data-ref="chargeToggle" hidden>--</button>
   </div>
 </div>
+
+<div class="chips" data-ref="chips">
+  <div class="stats">
+    <div class="stat" data-role="voltage">
+      <span class="stat-label" data-ref="lblVolt"></span>
+      <span class="stat-value" data-ref="voltValue">--</span>
+      <span class="bar"><i data-ref="voltBar"></i></span>
+    </div>
+    <div class="stat" data-role="charge_switch">
+      <span class="stat-label" data-ref="lblWindow"></span>
+      <span class="stat-value" data-ref="windowValue">--</span>
+      <span class="bar window-bar">
+        <i class="band" data-ref="windowBand"></i>
+        <b class="marker" data-ref="windowMarker"></b>
+      </span>
+    </div>
+    <div class="stat power" data-ref="powerTile" data-role="ac">
+      <span class="stat-label" data-ref="lblPower"></span>
+      <span class="stat-value" data-ref="powerValue">--</span>
+      <span class="stat-sub" data-ref="powerSince"></span>
+    </div>
+  </div>
+  <div class="pills">
+    <div class="chip" data-ref="chipAc" data-role="ac">
+      <span class="chip-dot"></span><span class="chip-text">--</span>
+    </div>
+    <div class="chip" data-ref="chipCharge" data-role="charging">
+      <span class="chip-dot"></span><span class="chip-text">--</span>
+    </div>
+    <div class="chip" data-ref="chipLow" data-role="low">
+      <span class="chip-dot"></span><span class="chip-text">--</span>
+    </div>
+    <div class="chip window-chip" data-ref="chipWindow" data-role="charge_switch" data-good="true" hidden>
+      <span class="chip-dot"></span><span class="chip-text">--</span>
+    </div>
+  </div>
+</div>
+
+<div class="charge-row" data-ref="chargeRow" hidden>
+  <span class="charge-label" data-ref="lblCharge"></span>
+  <span class="charge-state" data-ref="chargeState"></span>
+  <button class="charge-toggle" data-ref="chargeToggle" role="switch" aria-checked="false">
+    <span class="knob"></span>
+  </button>
+</div>
+
+<div class="spark" data-ref="spark">
+  <span class="spark-note" data-ref="sparkNote"></span>
+  <svg viewBox="0 0 ${SPARK_W} ${SPARK_H}" preserveAspectRatio="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="x-spark" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="var(--x-tint)" stop-opacity="0.45"/>
+        <stop offset="100%" stop-color="var(--x-tint)" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path class="spark-area" data-ref="sparkArea" d=""/>
+    <path class="spark-line" data-ref="sparkLine" d="" pathLength="1"/>
+  </svg>
+  <span class="spark-tip" data-ref="sparkTip" hidden></span>
+</div>
+
 `;
 
 /* ----------------------------------------------------------------- styles */
@@ -710,119 +936,117 @@ const STYLES = `
   --x-muted: var(--secondary-text-color, #93a0b4);
   --x-surface: var(--ha-card-background, var(--card-background-color, #16181d));
   display: block;
+  height: 100%;
   /* Lets the layout below react to the width of the card itself. A media
      query inside a shadow root measures the viewport, so a narrow card on a
      wide screen would wrongly keep the two-column layout. */
   container-type: inline-size;
 }
+[hidden] { display: none !important; }
 
 ha-card.x120x {
   position: relative;
-  display: block;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  height: 100%;
+  box-sizing: border-box;
   overflow: hidden;
-  padding: 18px;
-  background:
-    radial-gradient(130% 100% at 100% 0%, color-mix(in srgb, var(--x-tint) 13%, transparent), transparent 58%),
-    var(--x-surface);
+  padding: 16px 18px 18px;
+  background: var(--x-surface);
 }
 
-.glow {
+/* An aurora in the colour of the state drifts behind everything. */
+.aurora {
   position: absolute;
-  inset: -45% -20% auto -20%;
-  height: 75%;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--x-tint) 32%, transparent), transparent);
-  filter: blur(30px);
-  opacity: .5;
+  z-index: -1;
+  inset: 0;
   pointer-events: none;
-  transition: opacity 600ms ease;
+  background:
+    radial-gradient(60% 70% at 100% 0%, color-mix(in srgb, var(--x-tint) 26%, transparent), transparent 70%),
+    radial-gradient(50% 60% at 0% 100%, color-mix(in srgb, #4fc3ff 12%, transparent), transparent 70%),
+    radial-gradient(40% 50% at 40% 40%, color-mix(in srgb, var(--x-tint) 8%, transparent), transparent 70%);
+  background-size: 150% 150%;
+  animation: aurora 20s ease-in-out infinite alternate;
+  transition: background 600ms ease;
 }
-:host(.is-alert) .glow { animation: breathe 2.2s ease-in-out infinite; }
+[data-alert="true"] .aurora { animation: aurora 20s ease-in-out infinite alternate, alarm 1.6s ease-in-out infinite; }
 
+/* --- header --- */
 .head {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
-.title {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--x-ink);
-}
+.title { font-size: 1.1rem; font-weight: 700; letter-spacing: -.01em; color: var(--x-ink); }
 .status {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 11px;
+  padding: 5px 12px 5px 10px;
   border-radius: 999px;
   cursor: pointer;
   font-size: .76rem;
-  font-weight: 600;
+  font-weight: 650;
   white-space: nowrap;
-  color: var(--x-tint);
-  background: color-mix(in srgb, var(--x-tint) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--x-tint) 32%, transparent);
+  color: color-mix(in srgb, var(--x-tint) 70%, var(--x-ink));
+  background: color-mix(in srgb, var(--x-tint) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--x-tint) 36%, transparent);
+  box-shadow: 0 0 20px -6px color-mix(in srgb, var(--x-tint) 60%, transparent);
 }
 .status .dot {
-  width: 7px; height: 7px; border-radius: 50%;
+  width: 8px; height: 8px; border-radius: 50%;
   background: var(--x-tint);
   animation: ping 2.4s ease-out infinite;
 }
 
-.body {
-  position: relative;
+/* --- hero: gauge and diagram --- */
+.hero {
   display: grid;
-  grid-template-columns: 190px 1fr;
+  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
   gap: 18px;
   align-items: center;
 }
-@container (max-width: 470px) {
-  .body { grid-template-columns: 1fr; gap: 10px; }
+@container (max-width: 520px) {
+  .hero { grid-template-columns: 1fr; gap: 10px; justify-items: center; }
+  .flow { width: 100%; max-width: 380px; }
 }
 
-/* --- gauge --- */
-.gauge {
-  position: relative;
-  width: 100%;
-  max-width: 190px;
-  aspect-ratio: 1;
-  margin: 0 auto;
-  cursor: pointer;
-}
+.gauge { position: relative; width: 100%; max-width: 210px; aspect-ratio: 1; margin: 0 auto; cursor: pointer; }
 .gauge > svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.gauge .track {
-  fill: none;
-  stroke: color-mix(in srgb, var(--x-ink) 9%, transparent);
-  stroke-width: 13;
+.halo {
+  fill: color-mix(in srgb, var(--x-tint) 7%, transparent);
+  stroke: none;
+  transform-origin: 100px 100px;
+  animation: breathe 5s ease-in-out infinite;
 }
-.gauge .value {
+.tick { stroke: color-mix(in srgb, var(--x-ink) 14%, transparent); stroke-width: 2.4; stroke-linecap: round; transition: stroke 300ms ease; }
+.tick.on { stroke: var(--x-tint); filter: drop-shadow(0 0 2px var(--x-tint)); }
+.track { fill: none; stroke: color-mix(in srgb, var(--x-ink) 8%, transparent); stroke-width: 12; }
+.value {
   fill: none;
   stroke: url(#x-arc);
-  stroke-width: 13;
+  stroke-width: 12;
   stroke-linecap: round;
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--x-tint) 55%, transparent));
-  transition: stroke-dashoffset 900ms cubic-bezier(.22,.61,.36,1);
+  transition: stroke-dashoffset 1100ms cubic-bezier(.22,.61,.36,1);
 }
-.gauge .window {
+.window {
   fill: none;
-  stroke: color-mix(in srgb, var(--x-tint) 55%, transparent);
-  stroke-width: 3;
+  stroke: color-mix(in srgb, var(--x-tint) 60%, transparent);
+  stroke-width: 3.5;
   stroke-linecap: round;
   opacity: 0;
   transition: opacity 400ms ease, stroke-dashoffset 600ms ease;
 }
-.gauge .sweep {
-  fill: none;
-  stroke: color-mix(in srgb, var(--x-tint) 65%, transparent);
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  stroke-dasharray: 16 500;
-  transform-origin: 100px 100px;
-  opacity: 0;
-}
-:host(.is-charging) .gauge .sweep { opacity: 1; animation: orbit 3.4s linear infinite; }
+.comet { transform-origin: 100px 100px; opacity: 0; }
+.comet circle { fill: #fff; filter: drop-shadow(0 0 4px var(--x-tint)) drop-shadow(0 0 9px var(--x-tint)); }
+/* A comet laps the ring forwards while the pack charges, backwards while it drains. */
+[data-mode="charging"] .comet { opacity: 1; animation: spin 2.6s linear infinite; }
+[data-mode="battery"] .comet, [data-mode="low"] .comet { opacity: 1; animation: spin 3.4s linear infinite reverse; }
 
 .readout {
   position: absolute;
@@ -834,127 +1058,138 @@ ha-card.x120x {
   pointer-events: none;
 }
 .percent {
-  font-size: 2.4rem;
-  font-weight: 700;
+  font-size: clamp(1.8rem, 9cqw, 2.6rem);
+  font-weight: 780;
   line-height: 1;
   color: var(--x-ink);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
+  letter-spacing: -.03em;
 }
 .percent i { font-size: .95rem; font-style: normal; color: var(--x-muted); margin-left: 3px; }
-.volts {
-  margin-top: 6px;
-  font-size: .84rem;
-  color: var(--x-muted);
-  font-variant-numeric: tabular-nums;
-  pointer-events: auto;
-  cursor: pointer;
-}
+.volts { margin-top: 6px; font-size: .8rem; color: var(--x-muted); font-variant-numeric: tabular-nums; pointer-events: auto; cursor: pointer; }
 .level {
-  margin-top: 2px;
-  font-size: .64rem;
+  margin-top: 3px;
+  font-size: .62rem;
   letter-spacing: .12em;
   text-transform: uppercase;
-  font-weight: 600;
-  color: color-mix(in srgb, var(--x-tint) 90%, var(--x-muted));
+  font-weight: 700;
+  color: color-mix(in srgb, var(--x-tint) 85%, var(--x-muted));
 }
 
-/* --- flow --- */
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  max-width: 460px;
-}
-.flow {
-  display: grid;
-  grid-template-columns: auto minmax(14px, 1fr) auto minmax(14px, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-.node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  font-size: .6rem;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: var(--x-muted);
-}
-.node .glyph {
-  width: 26px; height: 26px;
-  fill: var(--x-ink);
-  opacity: .8;
-  transition: opacity 300ms ease;
-}
-.node.mains { cursor: pointer; }
-.node.mains.off .glyph { opacity: .25; }
-.node.mains.off { color: color-mix(in srgb, #ff5c5c 75%, var(--x-muted)); }
-.node.ups { cursor: pointer; color: var(--x-tint); }
-
-/* the battery cell doubles as the UPS glyph */
-.cell { width: 30px; height: 50px; display: block; }
-.cell .shell {
-  fill: none;
-  stroke: color-mix(in srgb, var(--x-ink) 30%, transparent);
-  stroke-width: 3;
-}
-.cell .cap { fill: color-mix(in srgb, var(--x-ink) 30%, transparent); }
-.cell .liquid {
-  fill: url(#x-liquid);
-  transition: y 900ms cubic-bezier(.22,.61,.36,1), height 900ms cubic-bezier(.22,.61,.36,1);
-}
-.cell .bubbles circle { fill: #fff; opacity: 0; }
-:host(.is-charging) .cell .bubbles circle { animation: rise 2.6s ease-in infinite; }
-:host(.is-charging) .cell .bubbles circle:nth-child(2) { animation-delay: .8s; }
-:host(.is-charging) .cell .bubbles circle:nth-child(3) { animation-delay: 1.6s; }
-.cell .bolt {
-  fill: #fff;
-  opacity: 0;
-  transition: opacity 400ms ease;
-}
-:host(.is-charging) .cell .bolt { opacity: .9; }
-
-.lane {
-  position: relative;
-  height: 3px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--x-ink) 12%, transparent);
-  overflow: hidden;
-}
-.lane .pulse {
-  position: absolute;
-  top: 0; bottom: 0;
-  width: 45%;
-  border-radius: 2px;
-  background: linear-gradient(90deg, transparent, var(--x-tint), transparent);
-  animation: slide 1.9s linear infinite;
-}
-.flow[data-direction="out"] .lane-in .pulse { opacity: 0; animation: none; }
-
-/* --- sparkline --- */
-.spark { width: 100%; height: 30px; display: block; }
-.spark polyline {
+/* --- the diagram --- */
+.flow svg { width: 100%; height: auto; display: block; overflow: visible; }
+.node-label { fill: var(--x-muted); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.wire-track { fill: none; stroke: color-mix(in srgb, var(--x-ink) 12%, transparent); stroke-width: 5; stroke-linecap: round; }
+.energy {
   fill: none;
   stroke: var(--x-tint);
-  stroke-width: 1.8;
-  stroke-linejoin: round;
+  stroke-width: 5;
   stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--x-tint) 45%, transparent));
+  stroke-dasharray: 2 14;
+  filter: drop-shadow(0 0 4px var(--x-tint));
+  opacity: 0;
 }
-.spark .spark-area { fill: url(#x-spark); stroke: none; }
-.spark polyline.empty {
+/* Energy always travels towards the Pi; only the mains leg goes quiet. */
+[data-mode="mains"] .energy, [data-mode="charging"] .energy { opacity: 1; animation: flow 0.9s linear infinite; }
+[data-mode="battery"] .e-out, [data-mode="low"] .e-out { opacity: 1; animation: flow 1.4s linear infinite; }
+[data-mode="battery"] .e-in, [data-mode="low"] .e-in { opacity: 0; }
+/* In a blackout the mains wire is cut: thin, broken, grey. */
+[data-mode="battery"] .wire-track:first-of-type, [data-mode="low"] .wire-track:first-of-type {
+  stroke-width: 2;
+  stroke-dasharray: 3 9;
   stroke: color-mix(in srgb, var(--x-ink) 22%, transparent);
-  stroke-width: 1.2;
-  stroke-dasharray: 3 4;
-  filter: none;
 }
 
-/* --- chips --- */
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mains { cursor: pointer; }
+.socket { fill: color-mix(in srgb, var(--x-ink) 8%, var(--x-surface)); stroke: color-mix(in srgb, var(--x-ink) 26%, transparent); stroke-width: 1.5; }
+.socket-face { fill: color-mix(in srgb, var(--x-ink) 4%, transparent); stroke: color-mix(in srgb, var(--x-ink) 16%, transparent); }
+.pin { fill: color-mix(in srgb, var(--x-ink) 55%, var(--x-surface)); }
+.cut { stroke: #ff5c5c; stroke-width: 3.5; stroke-linecap: round; opacity: 0; }
+[data-mode="mains"] .socket, [data-mode="charging"] .socket { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--x-tint) 50%, transparent)); }
+[data-mode="battery"] .cut, [data-mode="low"] .cut { opacity: .9; animation: flicker 2.2s steps(1, end) infinite; }
+[data-mode="battery"] .mains, [data-mode="low"] .mains { opacity: .55; }
+
+.pack { cursor: pointer; }
+.pack-shell { fill: color-mix(in srgb, var(--x-ink) 5%, transparent); stroke: color-mix(in srgb, var(--x-ink) 32%, transparent); stroke-width: 2.5; }
+.pack-cap { fill: color-mix(in srgb, var(--x-ink) 32%, transparent); }
+.pack-shine { fill: #fff; opacity: .2; }
+.liquid { transition: transform 1300ms cubic-bezier(.22,.61,.36,1); transform: translateY(${CELL_BOTTOM}px); }
+.wave path { fill: var(--x-tint); transition: fill 600ms ease; }
+.wave.back path { opacity: .45; }
+.wave.front path { opacity: .92; }
+.wave.back { animation: wave-b 3.4s linear infinite; }
+.wave.front { animation: wave-f 2.4s linear infinite; }
+.bub { fill: #fff; opacity: 0; }
+[data-mode="charging"] .bub { animation: bubble 2.8s ease-in infinite; }
+[data-mode="charging"] .bub:nth-of-type(2) { animation-delay: -.9s; animation-duration: 2.3s; }
+[data-mode="charging"] .bub:nth-of-type(3) { animation-delay: -1.8s; animation-duration: 3.3s; }
+.bolt { fill: #fff; stroke: color-mix(in srgb, var(--x-tint) 60%, #000); stroke-width: .8; opacity: 0; transition: opacity 400ms ease; }
+[data-mode="charging"] .bolt { opacity: .95; animation: bolt 1.6s ease-in-out infinite; }
+[data-mode="low"] .pack-shell { stroke: #ff5c5c; animation: alarm 1.2s ease-in-out infinite; }
+
+.pcb { stroke: color-mix(in srgb, #000 30%, transparent); }
+.gpio rect { fill: #e8c46a; }
+.soc { fill: #2a2f36; stroke: #9aa3ad; stroke-width: .8; }
+.port-usb { fill: #c9ced6; stroke: #7a828c; stroke-width: .6; }
+.led-pwr { fill: #ff5c5c; filter: drop-shadow(0 0 2px #ff5c5c); }
+.led-act { fill: #3ddc97; filter: drop-shadow(0 0 2px #3ddc97); animation: flicker 1.3s steps(1, end) infinite; }
+.pi { animation: none; }
+[data-mode="low"] .led-act { animation-duration: .5s; }
+
+/* --- stat tiles --- */
+.chips { display: block; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.pills { display: none; flex-wrap: wrap; gap: 6px; }
+[data-chips="pills"] .stats { display: none; }
+[data-chips="pills"] .pills { display: flex; }
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--x-surface) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--x-ink) 9%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: transform 200ms ease, border-color 200ms ease;
+}
+.stat:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--x-tint) 40%, transparent); }
+.stat-label { font-size: .64rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--x-muted); }
+.stat-value { font-size: 1.05rem; font-weight: 720; color: var(--x-ink); font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: .72rem; color: var(--x-muted); }
+.stat-sub:empty { display: none; }
+.bar { position: relative; height: 7px; border-radius: 999px; background: color-mix(in srgb, var(--x-ink) 9%, transparent); overflow: hidden; }
+.bar > i {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--x-tint) 50%, transparent), var(--x-tint));
+  transition: width 900ms cubic-bezier(.22,.61,.36,1), left 900ms cubic-bezier(.22,.61,.36,1);
+  overflow: hidden;
+}
+.bar > i::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.45) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: shine 3.6s ease-in-out infinite;
+}
+.window-bar { overflow: visible; }
+.window-bar .band { background: color-mix(in srgb, var(--x-tint) 45%, transparent); }
+.marker {
+  position: absolute; top: 50%;
+  width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+  border-radius: 50%;
+  background: var(--x-tint);
+  border: 2px solid var(--x-surface);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--x-tint) 60%, transparent);
+  animation: ping 2.4s ease-out infinite;
+  transition: left 900ms cubic-bezier(.22,.61,.36,1);
+}
+.power .stat-value { color: color-mix(in srgb, #ff5c5c 75%, var(--x-ink)); }
+.power[data-good="true"] .stat-value { color: var(--x-ink); }
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -967,122 +1202,252 @@ ha-card.x120x {
   background: color-mix(in srgb, var(--x-ink) 7%, transparent);
   transition: background 250ms ease, color 250ms ease;
 }
-.chip[hidden] { display: none; }
 .chip:hover { background: color-mix(in srgb, var(--x-ink) 13%, transparent); }
 .chip .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: #ff5c5c; }
 .chip[data-good="true"] .chip-dot { background: var(--x-tint); }
 .chip[data-good="true"] { color: var(--x-ink); }
-.chip.window-chip {
-  background: color-mix(in srgb, var(--x-tint) 12%, transparent);
-  color: var(--x-tint);
+.chip.window-chip { background: color-mix(in srgb, var(--x-tint) 12%, transparent); color: color-mix(in srgb, var(--x-tint) 70%, var(--x-ink)); }
+
+/* --- sparkline --- */
+.spark { position: relative; height: 74px; margin: 0 -18px -18px; }
+.spark svg { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: ${SPARK_H}px; display: block; }
+.spark-area { fill: url(#x-spark); stroke: none; }
+.spark-line {
+  fill: none;
+  stroke: var(--x-tint);
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--x-tint) 45%, transparent));
+}
+.spark-line.empty { stroke: color-mix(in srgb, var(--x-ink) 22%, transparent); stroke-width: 1.2; stroke-dasharray: 3 4; filter: none; }
+.spark.reveal .spark-line:not(.empty) { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1500ms cubic-bezier(.3,.7,.4,1) forwards; }
+.spark.reveal .spark-area { animation: fade-in 1500ms ease-out both; }
+.spark-note { position: absolute; top: 2px; left: 18px; font-size: .68rem; color: var(--x-muted); font-variant-numeric: tabular-nums; }
+.spark-tip {
+  position: absolute; right: 1px;
+  width: 8px; height: 8px; margin-bottom: -4px;
+  border-radius: 50%;
+  background: var(--x-tint);
+  animation: ping 1.8s ease-out infinite;
 }
 
+/* --- charge switch --- */
+.charge-row { display: flex; align-items: center; gap: 10px; }
+.charge-label { font-size: .86rem; font-weight: 650; color: var(--x-ink); }
+.charge-state { flex: 1; font-size: .76rem; color: var(--x-muted); }
 .charge-toggle {
   appearance: none;
-  border: 1px solid color-mix(in srgb, var(--x-ink) 16%, transparent);
-  background: transparent;
-  color: var(--x-muted);
-  border-radius: 10px;
-  padding: 8px 12px;
-  font: inherit;
-  font-size: .78rem;
+  position: relative;
+  width: 50px; height: 28px;
+  flex: none;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--x-ink) 18%, transparent);
+  background: color-mix(in srgb, var(--x-ink) 12%, transparent);
   cursor: pointer;
-  transition: color 250ms ease, border-color 250ms ease, background 250ms ease, transform 150ms ease;
+  transition: background 300ms ease, border-color 300ms ease, box-shadow 300ms ease;
 }
-.charge-toggle[data-on="true"] {
-  color: var(--x-tint);
-  border-color: color-mix(in srgb, var(--x-tint) 45%, transparent);
-  background: color-mix(in srgb, var(--x-tint) 10%, transparent);
+.charge-toggle .knob {
+  position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  transition: transform 300ms cubic-bezier(.34,1.56,.64,1);
 }
-.charge-toggle:hover { transform: translateY(-1px); }
+.charge-toggle[aria-checked="true"] {
+  background: var(--x-tint);
+  border-color: transparent;
+  box-shadow: 0 0 14px -2px color-mix(in srgb, var(--x-tint) 70%, transparent);
+}
+.charge-toggle[aria-checked="true"] .knob { transform: translateX(22px); }
+.charge-toggle:focus-visible { outline: 2px solid var(--x-tint); outline-offset: 2px; }
 
 /* --- variants --- */
 /* Blocks are switched off with [hidden]; what is left is only a matter of
    sizing, so each variant is a handful of overrides rather than a layout of
-   its own. */
-[hidden] { display: none !important; }
+   its own. Without the diagram, the ring and the stats share a row. */
+[data-variant="compact"] .hero, [data-variant="slim"] .hero { display: block; }
+ha-card.x120x[data-variant="compact"] { padding: 14px 16px 16px; }
+[data-variant="compact"] .gauge { max-width: 150px; }
+[data-variant="compact"] .percent { font-size: 1.9rem; }
 
-ha-card.x120x[data-variant="compact"] { padding: 14px 16px; }
-[data-variant="compact"] .body { grid-template-columns: 130px 1fr; gap: 14px; }
-[data-variant="compact"] .gauge { max-width: 130px; }
-[data-variant="compact"] .percent { font-size: 1.8rem; }
-[data-variant="compact"] .volts { margin-top: 4px; font-size: .76rem; }
-[data-variant="compact"] .level { display: none; }
-
-ha-card.x120x[data-variant="slim"] { padding: 12px 16px; }
-[data-variant="slim"] .head { margin-bottom: 4px; }
-[data-variant="slim"] .body { grid-template-columns: 84px 1fr; gap: 14px; }
-[data-variant="slim"] .gauge { max-width: 84px; }
-[data-variant="slim"] .gauge .track,
-[data-variant="slim"] .gauge .value { stroke-width: 16; }
-[data-variant="slim"] .percent { font-size: 1.25rem; }
+ha-card.x120x[data-variant="slim"] {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  grid-template-areas: "gauge head" "gauge chips";
+  align-items: center;
+  gap: 6px 14px;
+  padding: 12px 16px;
+}
+[data-variant="slim"] .head { grid-area: head; }
+[data-variant="slim"] .hero { grid-area: gauge; }
+[data-variant="slim"] .chips { grid-area: chips; }
+[data-variant="slim"] .gauge { max-width: 92px; }
+[data-variant="slim"] .percent { font-size: 1.3rem; }
 [data-variant="slim"] .percent i { font-size: .7rem; }
-[data-variant="slim"] .volts,
-[data-variant="slim"] .level { display: none; }
-[data-variant="slim"] .chips { gap: 5px; }
-[data-variant="slim"] .gauge .window { display: none; }
-/* slim + show_flow: the diagram has to give up some size to fit beside a
-   84px dial without the lanes collapsing to nothing. */
-[data-variant="slim"] .flow { gap: 6px; grid-template-columns: auto minmax(10px, 1fr) auto minmax(10px, 1fr) auto; }
-[data-variant="slim"] .node { gap: 2px; font-size: .52rem; letter-spacing: .05em; }
-[data-variant="slim"] .node .glyph { width: 19px; height: 19px; }
-[data-variant="slim"] .cell { width: 21px; height: 35px; }
+[data-variant="slim"] .volts, [data-variant="slim"] .level, [data-variant="slim"] .ticks, [data-variant="slim"] .window { display: none; }
+
+/* A bare dial, for a square tile in a grid. */
+ha-card.x120x[data-variant="gauge"] { padding: 14px; }
+[data-variant="gauge"] .hero { grid-template-columns: 1fr; }
+[data-variant="gauge"] .gauge { max-width: 240px; }
 
 /* --- entrance --- */
 /* One pass on first paint, so a dashboard full of cards assembles itself
    instead of appearing all at once. */
-.head, .body { animation: rise-in 520ms cubic-bezier(.22,.61,.36,1) both; }
-.body { animation-delay: 60ms; }
+.head, .hero, .chips, .charge-row, .spark { animation: rise-in 560ms cubic-bezier(.22,.61,.36,1) both; }
+.hero { animation-delay: 60ms; }
+.chips { animation-delay: 120ms; }
+.charge-row { animation-delay: 180ms; }
+.spark { animation-delay: 220ms; }
 
-@keyframes rise-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: none; }
-}
-
-/* A bare dial, for a square tile in a grid. */
-ha-card.x120x[data-variant="gauge"] { padding: 16px; }
-[data-variant="gauge"] .body { grid-template-columns: 1fr; }
-[data-variant="gauge"] .side { display: none; }
-[data-variant="gauge"] .gauge { max-width: 220px; }
-
-.empty { padding: 8px 4px; color: var(--x-muted); }
+.empty { padding: 8px 4px; color: var(--x-muted); line-height: 1.5; }
 .empty-title { font-size: 1.05rem; font-weight: 600; color: var(--x-ink); margin-bottom: 6px; }
 
 /* --- keyframes --- */
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes aurora {
+  0%   { background-position: 0% 0%, 100% 100%, 50% 50%; }
+  100% { background-position: 60% 40%, 40% 60%, 20% 80%; }
+}
+@keyframes alarm { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @keyframes ping {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--x-tint) 70%, transparent); }
-  70%  { box-shadow: 0 0 0 7px transparent; }
+  70%  { box-shadow: 0 0 0 8px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-@keyframes slide {
-  from { transform: translateX(-120%); }
-  to   { transform: translateX(260%); }
+@keyframes breathe { 0%, 100% { opacity: .5; transform: scale(.97); } 50% { opacity: 1; transform: scale(1.03); } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes flow { to { stroke-dashoffset: -16; } }
+@keyframes flicker {
+  0% { opacity: 1; } 18% { opacity: .15; } 30% { opacity: 1; } 52% { opacity: .3; }
+  60% { opacity: 1; } 78% { opacity: .2; } 86% { opacity: 1; }
 }
-@keyframes orbit {
-  from { transform: rotate(-90deg); }
-  to   { transform: rotate(270deg); }
+@keyframes wave-b { from { transform: translateX(0); } to { transform: translateX(-26px); } }
+@keyframes wave-f { from { transform: translateX(-34px); } to { transform: translateX(0); } }
+@keyframes bubble {
+  0%   { opacity: 0; transform: translateY(var(--depth, 40px)) scale(.6); }
+  20%  { opacity: .6; }
+  90%  { opacity: .4; }
+  100% { opacity: 0; transform: translateY(4px) scale(1); }
 }
-@keyframes rise {
-  0%   { opacity: 0; transform: translateY(0) scale(.6); }
-  25%  { opacity: .5; }
-  100% { opacity: 0; transform: translateY(-46px) scale(1); }
-}
-@keyframes breathe {
-  0%, 100% { opacity: .3; }
-  50%      { opacity: .85; }
-}
+@keyframes bolt { 0%, 100% { filter: drop-shadow(0 0 2px #fff); } 50% { filter: drop-shadow(0 0 8px #fff); } }
+@keyframes shine { 0%, 35% { transform: translateX(-100%); } 75%, 100% { transform: translateX(100%); } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .glow, .status .dot, .lane .pulse, .cell .bubbles circle, .gauge .sweep,
-  .head, .body {
-    animation: none !important;
-  }
-  .gauge .value, .cell .liquid { transition: none; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 `;
 
+/* ----------------------------------------------------------------- editor */
+
+/**
+ * The visual editor: a handful of fields through Home Assistant's own
+ * <ha-form>, so variant and blocks are picked from menus instead of YAML.
+ */
+const EDITOR_LABELS = {
+  en: {
+    name: "Title",
+    device_id: "UPS (empty = the first one found)",
+    variant: "Layout",
+    hours: "Hours of history",
+    show_flow: "Energy diagram",
+    show_sparkline: "Level trace",
+    show_chips: "Stats",
+    show_button: "Charge switch",
+  },
+  it: {
+    name: "Titolo",
+    device_id: "UPS (vuoto = la prima trovata)",
+    variant: "Aspetto",
+    hours: "Ore di storico",
+    show_flow: "Schema dell'energia",
+    show_sparkline: "Andamento del livello",
+    show_chips: "Riquadri di stato",
+    show_button: "Interruttore di ricarica",
+  },
+};
+
+class X120XUpsCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+    else this._render();
+  }
+
+  _render() {
+    if (!this._hass || !this._config) return;
+    const language = String((this._hass.locale && this._hass.locale.language) || "en").slice(0, 2);
+    const labels = EDITOR_LABELS[language] || EDITOR_LABELS.en;
+    const variant = VARIANTS[this._config.variant || "full"] || VARIANTS.full;
+    const data = { variant: "full", hours: DEFAULT_HISTORY_HOURS, ...this._config };
+    for (const key of Object.keys(variant)) {
+      if (data[`show_${key}`] === undefined) data[`show_${key}`] = variant[key];
+    }
+
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (schema) => labels[schema.name] || schema.name;
+      this._form.addEventListener("value-changed", (ev) => {
+        const value = { ...ev.detail.value };
+        // A block left at what its variant decides is not written out.
+        const defaults = VARIANTS[value.variant || "full"] || VARIANTS.full;
+        for (const key of Object.keys(defaults)) {
+          if (value[`show_${key}`] === defaults[key]) delete value[`show_${key}`];
+        }
+        if (Number(value.hours) === DEFAULT_HISTORY_HOURS) delete value.hours;
+        if (!value.name) delete value.name;
+        if (!value.device_id) delete value.device_id;
+        this._config = { type: "custom:x120x-ups-card", ...value };
+        const event = new Event("config-changed", { bubbles: true, composed: true });
+        event.detail = { config: this._config };
+        this.dispatchEvent(event);
+      });
+      this.appendChild(this._form);
+    }
+    this._form.hass = this._hass;
+    this._form.schema = [
+      { name: "name", selector: { text: {} } },
+      { name: "device_id", selector: { device: { integration: "x120x" } } },
+      {
+        name: "variant",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "full", label: "Full" },
+              { value: "compact", label: "Compact" },
+              { value: "slim", label: "Slim" },
+              { value: "gauge", label: "Gauge" },
+            ],
+          },
+        },
+      },
+      { name: "hours", selector: { number: { min: 1, max: 168, mode: "box" } } },
+      { name: "show_flow", selector: { boolean: {} } },
+      { name: "show_sparkline", selector: { boolean: {} } },
+      { name: "show_chips", selector: { boolean: {} } },
+      { name: "show_button", selector: { boolean: {} } },
+    ];
+    this._form.data = data;
+  }
+}
+
 if (!customElements.get("x120x-ups-card")) {
   customElements.define("x120x-ups-card", X120XUpsCard);
+}
+if (!customElements.get("x120x-ups-card-editor")) {
+  customElements.define("x120x-ups-card-editor", X120XUpsCardEditor);
 }
 
 window.customCards = window.customCards || [];
@@ -1091,7 +1456,7 @@ if (!window.customCards.some((card) => card.type === "x120x-ups-card")) {
     type: "x120x-ups-card",
     name: "X120X UPS",
     description:
-      "Animated status panel for the Suptronics X120X UPS HAT: charge gauge, mains flow and charge control.",
+      "Animated status panel for the Suptronics X120X UPS HAT: charge ring, energy diagram, charge window and charge switch.",
     preview: true,
   });
 }

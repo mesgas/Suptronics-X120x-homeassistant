@@ -166,10 +166,21 @@ type: custom:x120x-ups-card
 
 It needs no configuration: it finds the X120X device and recognises its
 entities by device class, so it keeps working after a rename or in another
-language. It draws the charge ring with the configured window as an outer arc,
-a cell filling with animated liquid, the energy flow mains → UPS → Pi, a
-sparkline of the level and the charge button. Every element opens the
-more-info dialog of the matching entity.
+language. It shows:
+
+- a **charge ring** whose ticks light up to the level, with the configured
+  charge window as an outer arc;
+- an **energy diagram**: the mains socket, the pack drawn as a glass cell of
+  swaying liquid, and the Raspberry Pi board, with energy running along the
+  wires;
+- three **stat tiles**: the cell voltage on its 3.0–4.2 V scale, the charge
+  window as a band with the current level as a marker, and how long the mains
+  have been present or missing;
+- a **switch** to pause or resume charging, and the **trace** of the level.
+
+Every element opens the more-info dialog of the matching entity. The card
+speaks Italian or English, following the language of Home Assistant, and has
+a visual editor: layout, blocks and history window are picked from menus.
 
 The sparkline reads the last 24 hours from the recorder, so it has a trace the
 moment the card opens rather than only after the level has moved. `hours`
@@ -222,14 +233,19 @@ producing some arbitrary layout.
 Mains lost, the pack draining, the low-battery threshold crossed, then charging
 again: the tint, the ring, the chips and the glow all follow the state.
 
-Everything that moves carries information, and nothing loops without a reason:
+Everything that moves carries information:
 
-- the percentage **counts** up to its new value instead of snapping to it;
-- the ring fills with an interpolation, and a spark travels its edge only while
-  charging is actually happening;
-- the cell releases bubbles and shows the bolt only while charging;
-- the flow lanes pulse towards the Pi; the mains lane goes quiet in a blackout;
-- the glow breathes only when the battery is critical;
+- the percentage **counts** up to its new value, and the ring's ticks light up
+  one after another;
+- a comet laps the ring **forwards while charging** and **backwards while the
+  pack drains**;
+- the liquid in the cell sways all the time and rises or falls with the level;
+  bubbles and a glowing bolt appear only while charging;
+- energy runs mains → pack → Pi on mains power; in a blackout the mains wire
+  is cut, the socket is crossed out and only the pack feeds the Pi;
+- the Pi's activity LED blinks, faster when the battery is critical;
+- the background is an aurora in the colour of the state, and it throbs red
+  when the battery is low;
 - the card assembles itself with a brief entrance on first paint.
 
 The layout responds to the **width of the card**, not of the window
