@@ -773,7 +773,7 @@ class X120XUpsCard extends HTMLElement {
 const TEMPLATE = `
 <div class="aurora"></div>
 <div class="head">
-  <div class="title" data-ref="title">X120X UPS</div>
+  <div class="title"><ha-icon icon="mdi:battery-charging-high"></ha-icon><span data-ref="title">X120X UPS</span></div>
   <div class="status" data-role="status">
     <span class="dot"></span>
     <span data-ref="statusText">--</span>
@@ -784,12 +784,16 @@ const TEMPLATE = `
   <div class="gauge" data-role="capacity">
     <svg viewBox="0 0 200 200" aria-hidden="true">
       <defs>
+        <linearGradient id="x-dial" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" class="g-hi"/><stop offset="1" class="g-lo"/>
+        </linearGradient>
         <linearGradient id="x-arc" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stop-color="var(--x-tint)" stop-opacity="0.35"/>
           <stop offset="100%" stop-color="var(--x-tint)"/>
         </linearGradient>
       </defs>
-      <circle class="halo" cx="100" cy="100" r="${GAUGE_RADIUS}"/>
+      <circle class="halo" cx="100" cy="100" r="${GAUGE_RADIUS + 6}"/>
+      <circle class="dial" cx="100" cy="100" r="${GAUGE_RADIUS - 9}" fill="url(#x-dial)"/>
       <g class="ticks" data-ref="ticks"></g>
       <circle class="window" data-ref="gaugeWindow" cx="100" cy="100" r="${WINDOW_RADIUS}"
               transform="rotate(-90 100 100)"/>
@@ -806,34 +810,61 @@ const TEMPLATE = `
   </div>
 
   <div class="flow" data-ref="flow">
-    <svg viewBox="0 0 330 140" aria-hidden="true">
+    <svg viewBox="0 0 330 150" aria-hidden="true">
       <defs>
         <clipPath id="x-cell-clip"><rect x="139" y="${CELL_TOP}" width="52" height="${CELL_BOTTOM - CELL_TOP}" rx="9"/></clipPath>
-        <linearGradient id="x-pcb" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stop-color="#3fb27f"/><stop offset="1" stop-color="#1f7a52"/>
+        <clipPath id="x-shell-clip"><rect x="134" y="22" width="62" height="94" rx="13"/></clipPath>
+        <linearGradient id="x-body" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" class="g-hi"/><stop offset="1" class="g-lo"/>
         </linearGradient>
+        <radialGradient id="x-face" cx=".4" cy=".35" r=".75">
+          <stop offset="0" class="g-hi"/><stop offset="1" class="g-lo"/>
+        </radialGradient>
+        <linearGradient id="x-pcb" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#46c08a"/><stop offset="1" stop-color="#1d7450"/>
+        </linearGradient>
+        <linearGradient id="x-gloss" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+          <stop offset=".5" stop-color="#fff" stop-opacity=".45"/>
+          <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient>
+        <radialGradient id="x-floor">
+          <stop offset="0" class="fl-in"/><stop offset="1" class="fl-out"/>
+        </radialGradient>
+        <radialGradient id="x-shadow">
+          <stop offset="0" stop-color="#000" stop-opacity=".28"/><stop offset="1" stop-color="#000" stop-opacity="0"/>
+        </radialGradient>
       </defs>
 
+      <!-- shadows on the floor, and the glow of the state under the pack -->
+      <ellipse cx="42" cy="111" rx="32" ry="5" fill="url(#x-shadow)"/>
+      <ellipse class="floor" cx="165" cy="124" rx="52" ry="8" fill="url(#x-floor)"/>
+      <ellipse cx="165" cy="120" rx="34" ry="4.5" fill="url(#x-shadow)"/>
+      <ellipse cx="288" cy="109" rx="40" ry="5" fill="url(#x-shadow)"/>
+
       <!-- wires: a dim track, and the energy that runs along it -->
-      <path class="wire-track" d="M74 72 C 100 72, 108 72, 134 72"/>
+      <path class="wire-track" d="M76 72 C 100 72, 108 72, 134 72"/>
       <path class="wire-track" d="M196 72 C 222 72, 228 72, 252 72"/>
-      <path class="energy e-in" d="M74 72 C 100 72, 108 72, 134 72"/>
+      <path class="energy e-in" d="M76 72 C 100 72, 108 72, 134 72"/>
       <path class="energy e-out" d="M196 72 C 222 72, 228 72, 252 72"/>
 
-      <!-- mains socket -->
+      <!-- mains socket: a wall plate with a recessed face -->
       <g class="mains" data-role="ac">
-        <circle class="socket" cx="42" cy="72" r="28"/>
-        <circle class="socket-face" cx="42" cy="72" r="19"/>
+        <rect class="plate-edge" x="10" y="43" width="64" height="64" rx="16"/>
+        <rect class="plate" x="10" y="40" width="64" height="64" rx="16" fill="url(#x-body)"/>
+        <circle class="socket-rim" cx="42" cy="72" r="21"/>
+        <circle class="socket-face" cx="42" cy="72" r="18" fill="url(#x-face)"/>
         <circle class="pin" cx="35" cy="72" r="3.4"/>
         <circle class="pin" cx="49" cy="72" r="3.4"/>
+        <path class="plate-shine" d="M18 50 Q 20 44 28 44 H 56"/>
         <path class="cut" d="M24 54 L60 90"/>
-        <text class="node-label" x="42" y="122" text-anchor="middle" data-ref="lblMains"></text>
+        <text class="node-label" x="42" y="142" text-anchor="middle" data-ref="lblMains"></text>
       </g>
 
-      <!-- the pack -->
+      <!-- the pack: a glass cell with a metal cap -->
       <g class="pack" data-role="charging">
-        <rect class="pack-cap" x="153" y="14" width="24" height="9" rx="3"/>
-        <rect class="pack-shell" x="134" y="22" width="62" height="94" rx="13"/>
+        <rect class="pack-cap" x="153" y="13" width="24" height="10" rx="3" fill="url(#x-body)"/>
+        <rect class="pack-back" x="134" y="22" width="62" height="94" rx="13"/>
         <g clip-path="url(#x-cell-clip)">
           <g class="liquid" data-ref="liquid">
             <g transform="translate(139 0)">
@@ -845,21 +876,27 @@ const TEMPLATE = `
             <circle class="bub" cx="179" cy="0" r="2.6"/>
           </g>
         </g>
-        <rect class="pack-shine" x="142" y="32" width="5" height="70" rx="2.5"/>
+        <rect class="pack-shell" x="134" y="22" width="62" height="94" rx="13"/>
+        <rect class="pack-shine" x="141" y="30" width="6" height="76" rx="3"/>
+        <rect class="pack-shine soft" x="185" y="34" width="3" height="60" rx="1.5"/>
+        <g clip-path="url(#x-shell-clip)"><rect class="gloss" x="80" y="10" width="34" height="120" fill="url(#x-gloss)"/></g>
         <path class="bolt" d="M170 40 L156 72 L166 72 L161 98 L177 62 L167 62 Z"/>
-        <text class="node-label" x="165" y="134" text-anchor="middle" data-ref="lblPack"></text>
+        <text class="node-label" x="165" y="142" text-anchor="middle" data-ref="lblPack"></text>
       </g>
 
-      <!-- the Raspberry Pi -->
+      <!-- the Raspberry Pi: a board with its thickness, chips and ports -->
       <g class="pi">
-        <rect class="pcb" x="252" y="44" width="72" height="56" rx="6" fill="url(#x-pcb)"/>
-        <g class="gpio">${Array.from({ length: 10 }, (_, i) => `<rect x="${258 + i * 6}" y="48" width="3.4" height="3.4" rx=".6"/>`).join("")}</g>
-        <rect class="soc" x="270" y="62" width="22" height="22" rx="2.5"/>
-        <rect class="port-usb" x="314" y="56" width="10" height="12" rx="1.5"/>
-        <rect class="port-usb" x="314" y="74" width="10" height="12" rx="1.5"/>
-        <circle class="led-pwr" cx="260" cy="92" r="2.2"/>
-        <circle class="led-act" cx="267" cy="92" r="2.2"/>
-        <text class="node-label" x="288" y="122" text-anchor="middle" data-ref="lblPi"></text>
+        <rect class="pcb-edge" x="252" y="47" width="72" height="56" rx="7"/>
+        <rect class="pcb" x="252" y="43" width="72" height="56" rx="7" fill="url(#x-pcb)"/>
+        <g class="gpio">${Array.from({ length: 10 }, (_, i) => `<rect x="${258 + i * 6}" y="47" width="3.6" height="3.6" rx=".7"/>`).join("")}</g>
+        <rect class="soc-edge" x="270" y="63" width="22" height="22" rx="3"/>
+        <rect class="soc" x="270" y="61" width="22" height="22" rx="3"/>
+        <rect class="soc-shine" x="273" y="64" width="16" height="4" rx="2"/>
+        <rect class="port-usb" x="312" y="55" width="13" height="12" rx="2" fill="url(#x-body)"/>
+        <rect class="port-usb" x="312" y="73" width="13" height="12" rx="2" fill="url(#x-body)"/>
+        <circle class="led-pwr" cx="260" cy="91" r="2.3"/>
+        <circle class="led-act" cx="267" cy="91" r="2.3"/>
+        <text class="node-label" x="288" y="142" text-anchor="middle" data-ref="lblPi"></text>
       </g>
     </svg>
   </div>
@@ -944,17 +981,36 @@ const STYLES = `
 }
 [hidden] { display: none !important; }
 
+/* The same tile as the rest of the dashboard: rounded glass, a hairline
+   border, a soft drop shadow, and a light running along the top edge. */
 ha-card.x120x {
   position: relative;
   isolation: isolate;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   height: 100%;
   box-sizing: border-box;
   overflow: hidden;
-  padding: 16px 18px 18px;
-  background: var(--x-surface);
+  padding: 14px 16px 16px;
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--x-ink) 9%, transparent);
+  background: color-mix(in srgb, var(--x-surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, #000 8%, transparent),
+    0 14px 30px -22px color-mix(in srgb, #000 40%, transparent);
+}
+ha-card.x120x::after {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--x-tint) 80%, #fff), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: edge 7s ease-in-out infinite;
+  opacity: .8;
+  pointer-events: none;
 }
 
 /* An aurora in the colour of the state drifts behind everything. */
@@ -964,9 +1020,8 @@ ha-card.x120x {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(60% 70% at 100% 0%, color-mix(in srgb, var(--x-tint) 26%, transparent), transparent 70%),
-    radial-gradient(50% 60% at 0% 100%, color-mix(in srgb, #4fc3ff 12%, transparent), transparent 70%),
-    radial-gradient(40% 50% at 40% 40%, color-mix(in srgb, var(--x-tint) 8%, transparent), transparent 70%);
+    radial-gradient(60% 60% at 100% 0%, color-mix(in srgb, var(--x-tint) 16%, transparent), transparent 70%),
+    radial-gradient(50% 50% at 0% 100%, color-mix(in srgb, var(--x-tint) 7%, transparent), transparent 70%);
   background-size: 150% 150%;
   animation: aurora 20s ease-in-out infinite alternate;
   transition: background 600ms ease;
@@ -981,21 +1036,21 @@ ha-card.x120x {
   flex-wrap: wrap;
   gap: 8px 12px;
 }
-.title { font-size: 1.1rem; font-weight: 700; letter-spacing: -.01em; color: var(--x-ink); }
+.title { display: inline-flex; align-items: center; gap: 8px; font-size: 1rem; font-weight: 650; color: var(--x-ink); }
+.title ha-icon { --mdc-icon-size: 20px; color: color-mix(in srgb, var(--x-tint) 60%, var(--x-muted)); }
 .status {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 12px 5px 10px;
+  padding: 4px 11px;
   border-radius: 999px;
   cursor: pointer;
   font-size: .76rem;
   font-weight: 650;
   white-space: nowrap;
-  color: color-mix(in srgb, var(--x-tint) 70%, var(--x-ink));
-  background: color-mix(in srgb, var(--x-tint) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--x-tint) 36%, transparent);
-  box-shadow: 0 0 20px -6px color-mix(in srgb, var(--x-tint) 60%, transparent);
+  color: color-mix(in srgb, var(--x-tint) 65%, var(--x-ink));
+  background: color-mix(in srgb, var(--x-tint) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--x-tint) 32%, transparent);
 }
 .status .dot {
   width: 8px; height: 8px; border-radius: 50%;
@@ -1017,8 +1072,16 @@ ha-card.x120x {
 
 .gauge { position: relative; width: 100%; max-width: 210px; aspect-ratio: 1; margin: 0 auto; cursor: pointer; }
 .gauge > svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.g-hi { stop-color: color-mix(in srgb, var(--x-ink) 6%, var(--x-surface)); }
+.g-lo { stop-color: color-mix(in srgb, var(--x-ink) 17%, var(--x-surface)); }
+.fl-in { stop-color: var(--x-tint); stop-opacity: .5; }
+.fl-out { stop-color: var(--x-tint); stop-opacity: 0; }
+.dial {
+  stroke: color-mix(in srgb, var(--x-ink) 10%, transparent);
+  filter: drop-shadow(0 6px 8px color-mix(in srgb, #000 22%, transparent));
+}
 .halo {
-  fill: color-mix(in srgb, var(--x-tint) 7%, transparent);
+  fill: color-mix(in srgb, var(--x-tint) 10%, transparent);
   stroke: none;
   transform-origin: 100px 100px;
   animation: breathe 5s ease-in-out infinite;
@@ -1101,18 +1164,25 @@ ha-card.x120x {
 }
 
 .mains { cursor: pointer; }
-.socket { fill: color-mix(in srgb, var(--x-ink) 8%, var(--x-surface)); stroke: color-mix(in srgb, var(--x-ink) 26%, transparent); stroke-width: 1.5; }
-.socket-face { fill: color-mix(in srgb, var(--x-ink) 4%, transparent); stroke: color-mix(in srgb, var(--x-ink) 16%, transparent); }
+.plate-edge { fill: color-mix(in srgb, var(--x-ink) 30%, var(--x-surface)); }
+.plate { stroke: color-mix(in srgb, var(--x-ink) 22%, transparent); stroke-width: 1.2; }
+.plate-shine { fill: none; stroke: #fff; stroke-opacity: .5; stroke-width: 2; stroke-linecap: round; }
+.socket-rim { fill: color-mix(in srgb, var(--x-ink) 22%, var(--x-surface)); }
+.socket-face { stroke: color-mix(in srgb, var(--x-ink) 12%, transparent); }
 .pin { fill: color-mix(in srgb, var(--x-ink) 55%, var(--x-surface)); }
 .cut { stroke: #ff5c5c; stroke-width: 3.5; stroke-linecap: round; opacity: 0; }
-[data-mode="mains"] .socket, [data-mode="charging"] .socket { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--x-tint) 50%, transparent)); }
+[data-mode="mains"] .socket-rim, [data-mode="charging"] .socket-rim { fill: color-mix(in srgb, var(--x-tint) 45%, var(--x-surface)); filter: drop-shadow(0 0 5px var(--x-tint)); }
 [data-mode="battery"] .cut, [data-mode="low"] .cut { opacity: .9; animation: flicker 2.2s steps(1, end) infinite; }
 [data-mode="battery"] .mains, [data-mode="low"] .mains { opacity: .55; }
 
 .pack { cursor: pointer; }
-.pack-shell { fill: color-mix(in srgb, var(--x-ink) 5%, transparent); stroke: color-mix(in srgb, var(--x-ink) 32%, transparent); stroke-width: 2.5; }
-.pack-cap { fill: color-mix(in srgb, var(--x-ink) 32%, transparent); }
-.pack-shine { fill: #fff; opacity: .2; }
+.pack-back { fill: color-mix(in srgb, var(--x-ink) 7%, var(--x-surface)); }
+.pack-shell { fill: none; stroke: color-mix(in srgb, var(--x-ink) 34%, transparent); stroke-width: 2.5; }
+.pack-cap { stroke: color-mix(in srgb, var(--x-ink) 30%, transparent); }
+.pack-shine { fill: #fff; opacity: .35; }
+.pack-shine.soft { opacity: .18; }
+.gloss { animation: gloss 7s cubic-bezier(.45,0,.2,1) infinite; }
+.floor { animation: breathe 5s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
 .liquid { transition: transform 1300ms cubic-bezier(.22,.61,.36,1); transform: translateY(${CELL_BOTTOM}px); }
 .wave path { fill: var(--x-tint); transition: fill 600ms ease; }
 .wave.back path { opacity: .45; }
@@ -1127,7 +1197,10 @@ ha-card.x120x {
 [data-mode="charging"] .bolt { opacity: .95; animation: bolt 1.6s ease-in-out infinite; }
 [data-mode="low"] .pack-shell { stroke: #ff5c5c; animation: alarm 1.2s ease-in-out infinite; }
 
-.pcb { stroke: color-mix(in srgb, #000 30%, transparent); }
+.pcb { stroke: color-mix(in srgb, #000 25%, transparent); }
+.pcb-edge { fill: #145238; }
+.soc-edge { fill: #0e1114; }
+.soc-shine { fill: #fff; opacity: .12; }
 .gpio rect { fill: #e8c46a; }
 .soc { fill: #2a2f36; stroke: #9aa3ad; stroke-width: .8; }
 .port-usb { fill: #c9ced6; stroke: #7a828c; stroke-width: .6; }
@@ -1147,10 +1220,11 @@ ha-card.x120x {
   flex-direction: column;
   gap: 5px;
   padding: 10px 12px 12px;
-  border-radius: 16px;
+  border-radius: 18px;
   cursor: pointer;
-  background: color-mix(in srgb, var(--x-surface) 70%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--x-ink) 3%, var(--x-surface)), color-mix(in srgb, var(--x-ink) 7%, var(--x-surface)));
   border: 1px solid color-mix(in srgb, var(--x-ink) 9%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent), 0 10px 18px -16px color-mix(in srgb, #000 45%, transparent);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
   transition: transform 200ms ease, border-color 200ms ease;
@@ -1209,7 +1283,7 @@ ha-card.x120x {
 .chip.window-chip { background: color-mix(in srgb, var(--x-tint) 12%, transparent); color: color-mix(in srgb, var(--x-tint) 70%, var(--x-ink)); }
 
 /* --- sparkline --- */
-.spark { position: relative; height: 74px; margin: 0 -18px -18px; }
+.spark { position: relative; height: 74px; margin: 0 -16px -16px; }
 .spark svg { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: ${SPARK_H}px; display: block; }
 .spark-area { fill: url(#x-spark); stroke: none; }
 .spark-line {
@@ -1224,7 +1298,7 @@ ha-card.x120x {
 .spark-line.empty { stroke: color-mix(in srgb, var(--x-ink) 22%, transparent); stroke-width: 1.2; stroke-dasharray: 3 4; filter: none; }
 .spark.reveal .spark-line:not(.empty) { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1500ms cubic-bezier(.3,.7,.4,1) forwards; }
 .spark.reveal .spark-area { animation: fade-in 1500ms ease-out both; }
-.spark-note { position: absolute; top: 2px; left: 18px; font-size: .68rem; color: var(--x-muted); font-variant-numeric: tabular-nums; }
+.spark-note { position: absolute; top: 2px; left: 16px; font-size: .68rem; color: var(--x-muted); font-variant-numeric: tabular-nums; }
 .spark-tip {
   position: absolute; right: 1px;
   width: 8px; height: 8px; margin-bottom: -4px;
@@ -1311,9 +1385,11 @@ ha-card.x120x[data-variant="gauge"] { padding: 14px; }
 @keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes aurora {
-  0%   { background-position: 0% 0%, 100% 100%, 50% 50%; }
-  100% { background-position: 60% 40%, 40% 60%, 20% 80%; }
+  0%   { background-position: 0% 0%, 100% 100%; }
+  100% { background-position: 60% 40%, 40% 60%; }
 }
+@keyframes edge { 0% { background-position: -60% 0; } 60%, 100% { background-position: 160% 0; } }
+@keyframes gloss { 0%, 55% { transform: translateX(0); } 100% { transform: translateX(170px); } }
 @keyframes alarm { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @keyframes ping {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--x-tint) 70%, transparent); }
