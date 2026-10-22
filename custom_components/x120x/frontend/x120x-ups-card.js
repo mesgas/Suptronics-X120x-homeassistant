@@ -24,7 +24,7 @@
  * wires of the diagram -- mains to pack to Pi, or pack to Pi in a blackout.
  */
 
-const CARD_VERSION = "2.0.1";
+const CARD_VERSION = "2.0.2";
 
 const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -1296,7 +1296,7 @@ ha-card.x120x::after {
   filter: drop-shadow(0 0 4px color-mix(in srgb, var(--x-tint) 45%, transparent));
 }
 .spark-line.empty { stroke: color-mix(in srgb, var(--x-ink) 22%, transparent); stroke-width: 1.2; stroke-dasharray: 3 4; filter: none; }
-.spark.reveal .spark-line:not(.empty) { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1500ms cubic-bezier(.3,.7,.4,1) forwards; }
+.spark.reveal .spark-line:not(.empty) { animation: draw 1500ms cubic-bezier(.3,.7,.4,1) both; }
 .spark.reveal .spark-area { animation: fade-in 1500ms ease-out both; }
 .spark-note { position: absolute; top: 2px; left: 16px; font-size: .68rem; color: var(--x-muted); font-variant-numeric: tabular-nums; }
 .spark-tip {
@@ -1419,7 +1419,14 @@ ha-card.x120x[data-variant="gauge"] { padding: 14px; }
 }
 @keyframes bolt { 0%, 100% { filter: drop-shadow(0 0 2px #fff); } 50% { filter: drop-shadow(0 0 8px #fff); } }
 @keyframes shine { 0%, 35% { transform: translateX(-100%); } 75%, 100% { transform: translateX(100%); } }
-@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes draw {
+  /* The dash only stands in for the drawing: with non-scaling-stroke on a
+     stretched chart, a pathLength of 1 covers just part of the line, so the
+     dash is dropped at the end and the whole line stays. */
+  0% { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  99% { stroke-dasharray: 1; stroke-dashoffset: 0; }
+  100% { stroke-dasharray: none; stroke-dashoffset: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
